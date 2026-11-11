@@ -205,3 +205,52 @@ async def test_session_pooling():
     await downloader.stop()
 
 
+@pytest.mark.anyio
+async def test_domain_pacing_semaphore():
+    """Verifies LinkManager maintains a per-domain concurrency limiter to prevent 403 blocks."""
+    link_mgr = LinkManager()
+    sem1 = await link_mgr._get_domain_semaphore("fuckingfast.co")
+    sem2 = await link_mgr._get_domain_semaphore("fuckingfast.co")
+    assert sem1 is sem2, "Same domain should share the exact same semaphore"
+    assert sem1._value == 2, "Default domain semaphore limit should be 2"
+
+
+@pytest.mark.anyio
+async def test_resolve_pipeline_retry():
+    """Verifies that _execute_task_pipeline retries when resolving encounters transient errors."""
+    link_mgr = LinkManager()
+    net_mgr = NetworkManager()
+    session_mgr = MagicMock()
+    downloader = AsyncDownloader(link_mgr, net_mgr, session_mgr)
+    downloader.max_retries = 2
+
+    task = downloader.add_task("https://fuckingfast.co/test#part01.rar", "/tmp")
+
+    # Mock link_manager.resolve_link to fail once with 403, then succeed
+    attempts = 0
+
+    async def mock_resolve(url, interface=None, use_cache=True):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise ValueError("FuckingFast landing page returned HTTP 403")
+        return ("https://dl.fuckingfast.co/dl/test", "part01.rar", 1000)
+
+    link_mgr.resolve_link = mock_resolve
+
+    # Mock _download_stream so it completes immediately
+    async def mock_stream(t, ip):
+        t.status = TaskStatus.COMPLETED
+
+    downloader._download_stream = mock_stream
+
+    adapter = MagicMock()
+    adapter.friendly_type = "Wi-Fi"
+    adapter.ip_address = "127.0.0.1"
+
+    await downloader._execute_task_pipeline(task, adapter)
+    assert attempts == 2, f"Expected 2 resolve attempts, got {attempts}"
+    assert task.status == TaskStatus.COMPLETED
+
+
+

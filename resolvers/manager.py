@@ -29,6 +29,16 @@ class LinkManager:
         self.rd_client = rd_client or RealDebridClient()
         self._pre_resolution_cache: Dict[str, Tuple[str, str, int]] = {}
         self._pre_resolving_set: Set[str] = set()
+        self._domain_semaphores: Dict[str, asyncio.Semaphore] = {}
+        self._domain_last_request_time: Dict[str, float] = {}
+        self._domain_lock = asyncio.Lock()
+
+    async def _get_domain_semaphore(self, netloc: str) -> asyncio.Semaphore:
+        """Limits concurrent landing page resolutions to avoid triggering hoster/Cloudflare WAF rate limits."""
+        async with self._domain_lock:
+            if netloc not in self._domain_semaphores:
+                self._domain_semaphores[netloc] = asyncio.Semaphore(2)
+            return self._domain_semaphores[netloc]
 
     async def ingest_input(self, raw_input: str) -> List[str]:
         """Ingests arbitrary user input and extracts all candidate download links."""
@@ -76,7 +86,7 @@ class LinkManager:
         for url in to_process:
             self._pre_resolving_set.add(url)
             asyncio.create_task(self._resolve_and_cache(url, interface))
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(0.6)
 
     async def _resolve_and_cache(self, url: str, interface: Optional[str]) -> None:
         """Helper to resolve a link in the background and insert into cache."""
@@ -94,7 +104,7 @@ class LinkManager:
         interface: Optional[str] = None,
         use_cache: bool = True,
     ) -> Tuple[str, str, int]:
-        """Resolves a candidate link using the appropriate hoster resolver.
+        """Resolves a candidate link using the appropriate hoster resolver with domain pacing.
 
         Checks pre-resolution cache first for instantaneous 0ms pickup.
         """
@@ -104,33 +114,44 @@ class LinkManager:
         parsed = urllib.parse.urlparse(url)
         netloc = parsed.netloc.lower()
 
-        # 1. Real-Debrid unrestrictor (if configured and hoster is supported)
-        if self.rd_client.is_configured and any(
-            h in netloc for h in ["1fichier.com", "rapidgator.net"]
-        ):
-            try:
-                res = await self.rd_client.unrestrict(url, interface=interface)
+        # Enforce domain-level concurrency limiting and polite inter-request pacing
+        sem = await self._get_domain_semaphore(netloc)
+        async with sem:
+            loop = asyncio.get_running_loop()
+            now = loop.time()
+            last_time = self._domain_last_request_time.get(netloc, 0.0)
+            elapsed = now - last_time
+            if elapsed < 0.6:
+                await asyncio.sleep(0.6 - elapsed)
+            self._domain_last_request_time[netloc] = loop.time()
+
+            # 1. Real-Debrid unrestrictor (if configured and hoster is supported)
+            if self.rd_client.is_configured and any(
+                h in netloc for h in ["1fichier.com", "rapidgator.net"]
+            ):
+                try:
+                    res = await self.rd_client.unrestrict(url, interface=interface)
+                    self._pre_resolution_cache[url] = res
+                    return res
+                except Exception:
+                    pass
+
+            # 2. FuckingFast Resolver
+            if "fuckingfast.co" in netloc:
+                res = await FuckingFastResolver.resolve(url, interface=interface)
                 self._pre_resolution_cache[url] = res
                 return res
-            except Exception:
-                pass
 
-        # 2. FuckingFast Resolver
-        if "fuckingfast.co" in netloc:
-            res = await FuckingFastResolver.resolve(url, interface=interface)
+            # 3. DataNodes Resolver
+            if "datanodes.to" in netloc:
+                res = await DataNodesResolver.resolve(
+                    url, debrider=self.rd_client, interface=interface
+                )
+                self._pre_resolution_cache[url] = res
+                return res
+
+            # 4. Generic & Public Hosters (PixelDrain, MediaFire, direct)
+            direct_url, filename = await GenericResolver.resolve(url, interface=interface)
+            res = (direct_url, filename, 0)
             self._pre_resolution_cache[url] = res
             return res
-
-        # 3. DataNodes Resolver
-        if "datanodes.to" in netloc:
-            res = await DataNodesResolver.resolve(
-                url, debrider=self.rd_client, interface=interface
-            )
-            self._pre_resolution_cache[url] = res
-            return res
-
-        # 4. Generic & Public Hosters (PixelDrain, MediaFire, direct)
-        direct_url, filename = await GenericResolver.resolve(url, interface=interface)
-        res = (direct_url, filename, 0)
-        self._pre_resolution_cache[url] = res
-        return res

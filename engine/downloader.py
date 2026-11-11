@@ -450,20 +450,42 @@ class AsyncDownloader:
         task.assigned_adapter = f"{adapter.friendly_type} ({interface_ip})"
         self._task_assigned_ip[task.id] = interface_ip
 
-        # 1. Resolve direct link (using pre-resolved cache if available)
+        # 1. Resolve direct link (using pre-resolved cache if available) with retry
         task.status = TaskStatus.RESOLVING
-        try:
-            direct_url, filename, expected_size = await self.link_manager.resolve_link(
-                task.original_url, interface=interface_ip
-            )
-            task.direct_url = direct_url
-            if filename and (task.filename == "download.bin" or not task.filename):
-                task.filename = filename
-            if expected_size > 0:
-                task.file_size = expected_size
-        except Exception as exc:
-            task.status = TaskStatus.FAILED
-            task.error_message = f"{str(exc)}"
+        max_resolve_retries = max(1, self.max_retries)
+        resolve_success = False
+
+        for r_attempt in range(max_resolve_retries):
+            if task.status != TaskStatus.RESOLVING:
+                return
+            try:
+                direct_url, filename, expected_size = await self.link_manager.resolve_link(
+                    task.original_url, interface=interface_ip
+                )
+                task.direct_url = direct_url
+                if filename and (task.filename == "download.bin" or not task.filename):
+                    task.filename = filename
+                if expected_size > 0:
+                    task.file_size = expected_size
+                resolve_success = True
+                break
+            except Exception as exc:
+                err_str = str(exc)
+                if "404" in err_str or "Dead link" in err_str:
+                    task.status = TaskStatus.FAILED
+                    task.error_message = err_str
+                    return
+                if r_attempt < max_resolve_retries - 1:
+                    task.error_message = f"Resolving retry ({r_attempt + 1}/{max_resolve_retries}): {err_str}"
+                    await asyncio.sleep(min(4.0, 1.5 * (r_attempt + 1)))
+                else:
+                    task.status = TaskStatus.FAILED
+                    task.error_message = f"Resolve error: {err_str}"
+                    # Rapid failure circuit breaker: pause briefly to prevent cascading failure loop down queue
+                    await asyncio.sleep(1.5)
+                    return
+
+        if not resolve_success or not task.direct_url:
             return
 
         # 2. Download file stream with Range resuming
