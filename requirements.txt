@@ -1,0 +1,12 @@
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+curl_cffi>=0.7.0
+cryptography>=43.0.0
+base58>=2.1.1
+psutil>=6.0.0
+pydantic>=2.9.0
+requests>=2.32.0
+pytest>=8.3.0
+aiofiles>=24.1.0
+websockets>=13.0
+
