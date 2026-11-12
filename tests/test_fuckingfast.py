@@ -14,7 +14,8 @@ def test_fuckingfast_url_parsing():
     assert path_segments[0] == "xrhzu2j9ft3u"
 
 
-def test_fuckingfast_session_management():
+@pytest.mark.anyio
+async def test_fuckingfast_session_management():
     """Verifies that FuckingFastResolver maintains and caches persistent sessions per profile."""
     s1 = FuckingFastResolver._get_session(None, "chrome")
     s2 = FuckingFastResolver._get_session(None, "chrome")

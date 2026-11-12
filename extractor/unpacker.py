@@ -118,12 +118,13 @@ class ArchiveExtractor:
         ]
 
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+            proc = await asyncio.to_thread(
+                subprocess.run,
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
             )
-            stdout, stderr = await proc.communicate()
 
             if proc.returncode == 0:
                 self.extraction_jobs[group_id]["status"] = "SUCCESS"
@@ -136,7 +137,7 @@ class ArchiveExtractor:
                             pass
                 return True
             else:
-                err_text = stderr.decode("utf-8", errors="ignore") or stdout.decode("utf-8", errors="ignore")
+                err_text = proc.stderr.decode("utf-8", errors="ignore") or proc.stdout.decode("utf-8", errors="ignore")
                 self.extraction_jobs[group_id]["status"] = "FAILED"
                 self.extraction_jobs[group_id]["error"] = err_text[-500:]
                 return False
