@@ -44,6 +44,7 @@ downloader.max_retries = settings.get("max_retries", 3)
 downloader.min_segment_file_size_mb = settings.get("min_segment_file_size_mb", 10)
 downloader.bonding_strategy = settings.get("bonding_strategy", "ewma")
 downloader.delete_archive_after_extract = settings.get("delete_archive_after_extract", False)
+downloader.work_stealing_enabled = settings.get("work_stealing_enabled", True)
 
 # Restore previous session tasks if any
 for t_data in saved_state.get("tasks", []):
@@ -110,13 +111,23 @@ async def startup_event():
             all_tasks = list(downloader.tasks.values())
             groups = archive_extractor.group_tasks_by_sequence(all_tasks)
             for prefix, gdata in groups.items():
-                if gdata["is_complete"] and gdata["first_part"]:
+                if gdata["is_complete"] and gdata["first_part"] and gdata["extension"] != "bin":
                     first_file = os.path.join(gdata["destination_dir"], gdata["first_part"])
                     out_dir = os.path.join(gdata["destination_dir"], prefix.strip("._-"))
                     job = archive_extractor.extraction_jobs.get(prefix)
                     if not job:
+                        part_paths = [
+                            os.path.join(t.destination_dir, t.filename)
+                            for t in gdata["parts"].values()
+                        ]
                         asyncio.create_task(
-                            archive_extractor.extract_archive(first_file, out_dir, prefix)
+                            archive_extractor.extract_archive(
+                                first_file,
+                                out_dir,
+                                prefix,
+                                part_files=part_paths,
+                                delete_after_extract=downloader.delete_archive_after_extract,
+                            )
                         )
 
     downloader.on_complete_callback = on_complete
@@ -178,12 +189,9 @@ async def add_links(req: AddLinksRequest):
 
     # Ingest URLs (supports PrivateBin automated client decryption)
     links = await link_mgr.ingest_input(req.input_text)
-    created_tasks = []
-    for link in links:
-        task = downloader.add_task(original_url=link, destination_dir=target_dir)
-        created_tasks.append(task)
+    created_tasks = downloader.add_tasks_batch(links, target_dir)
 
-    session_mgr.save_session(settings, list(downloader.tasks.values()))
+    await asyncio.to_thread(session_mgr.save_session, settings, list(downloader.tasks.values()))
     return {"status": "ok", "count": len(created_tasks), "tasks": [t.id for t in created_tasks]}
 
 
@@ -314,6 +322,7 @@ async def update_settings(req: SettingsRequest):
         downloader.bonding_strategy = req.bonding_strategy
     if req.work_stealing_enabled is not None:
         settings["work_stealing_enabled"] = req.work_stealing_enabled
+        downloader.work_stealing_enabled = req.work_stealing_enabled
     if req.delete_archive_after_extract is not None:
         settings["delete_archive_after_extract"] = req.delete_archive_after_extract
         downloader.delete_archive_after_extract = req.delete_archive_after_extract

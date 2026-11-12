@@ -1,19 +1,11 @@
-"""High-Performance Async Download Engine with Adaptive Scheduling & Work-Stealing.
-
-Features:
-- Proportional adaptive slot allocation based on real-time EWMA bandwidth.
-- Autonomous Straggler Work-Stealing / Hand-Off (fast idle adapters take over lagging parts).
-- Manual 1-click network hand-off per task.
-- Anti-429 per-interface connection limits.
-- Pipelined background pre-resolving.
-- Resumable Range streaming directly to .part files.
-"""
-
+"""High-Performance Async Download Engine with Adaptive Scheduling & Work-Stealing."""
 import asyncio
+import inspect
 import os
 import re
 import subprocess
 import time
+import urllib.parse
 from typing import Callable, Dict, List, Optional
 import aiofiles
 from curl_cffi import requests
@@ -25,38 +17,38 @@ from resolvers.manager import LinkManager
 
 
 class TokenBucketLimiter:
-    """Async token bucket for enforcing global download bandwidth caps without busy-waiting."""
+    """Non-blocking reservation token bucket for global bandwidth capping across concurrent streams."""
 
     def __init__(self, rate_mbps: float = 0.0):
         self.rate_bytes_sec = rate_mbps * 1024 * 1024 if rate_mbps > 0 else 0.0
-        self.tokens = self.rate_bytes_sec
-        self.last_update = time.monotonic()
+        self._next_free_time = time.monotonic()
         self._lock = asyncio.Lock()
 
     def set_rate(self, rate_mbps: float) -> None:
         self.rate_bytes_sec = rate_mbps * 1024 * 1024 if rate_mbps > 0 else 0.0
-        self.tokens = max(self.tokens, self.rate_bytes_sec)
+        self._next_free_time = time.monotonic()
 
     async def consume(self, amount: int) -> None:
-        if self.rate_bytes_sec <= 0:
+        if self.rate_bytes_sec <= 0 or amount <= 0:
             return
         async with self._lock:
             now = time.monotonic()
-            elapsed = now - self.last_update
-            self.last_update = now
-            self.tokens = min(self.rate_bytes_sec, self.tokens + elapsed * self.rate_bytes_sec)
-            if self.tokens < amount:
-                deficit = amount - self.tokens
-                wait_time = deficit / self.rate_bytes_sec
-                if wait_time > 0:
-                    await asyncio.sleep(min(wait_time, 1.0))
-                self.tokens = 0.0
-            else:
-                self.tokens -= amount
+            # Allow burst up to 0.25s of bandwidth
+            min_cursor = now - 0.25
+            if self._next_free_time < min_cursor:
+                self._next_free_time = min_cursor
+            self._next_free_time += amount / self.rate_bytes_sec
+            wait_time = self._next_free_time - now
+
+        # Sleep OUTSIDE the lock so concurrent workers do not serialize
+        if wait_time > 0.005:
+            await asyncio.sleep(min(wait_time, 2.0))
 
 
 class AsyncDownloader:
     """Core download manager handling tasks, adaptive workers, and work-stealing."""
+
+    _NATURAL_RE = re.compile(r"(\d+)")
 
     def __init__(
         self,
@@ -81,6 +73,7 @@ class AsyncDownloader:
         self._straggler_loop_task: Optional[asyncio.Task] = None
         self._active_async_tasks: Dict[str, asyncio.Task] = {}
         self._task_assigned_ip: Dict[str, str] = {}
+        self._pinned_handoff_ip: Dict[str, str] = {}
         self._session_pool: Dict[Optional[str], requests.AsyncSession] = {}
         self._queue_event = asyncio.Event()
 
@@ -92,19 +85,27 @@ class AsyncDownloader:
         self.max_retries: int = 3
         self.min_segment_file_size_mb: int = 10
         self.bonding_strategy: str = "ewma"
+        self.work_stealing_enabled: bool = True
         self.delete_archive_after_extract: bool = False
 
+    def _fire_complete_callback(self, task: DownloadTask) -> None:
+        if not self.on_complete_callback:
+            return
+        try:
+            res = self.on_complete_callback(task)
+            if inspect.isawaitable(res):
+                asyncio.create_task(res)
+        except Exception:
+            pass
+
     def trigger_queue_processing(self) -> None:
-        """Signals the queue loop to immediately inspect and dispatch eligible tasks."""
         self._queue_event.set()
 
     def set_speed_limit(self, limit_mbps: float) -> None:
-        """Updates the global bandwidth cap."""
         self.speed_limit_mbps = max(0.0, limit_mbps)
         self._token_limiter.set_rate(self.speed_limit_mbps)
 
     async def _get_session(self, adapter_ip: Optional[str]) -> requests.AsyncSession:
-        """Retrieves or creates a pooled AsyncSession for the given adapter interface."""
         session = self._session_pool.get(adapter_ip)
         if session is None or getattr(session, "_closed", False):
             s_kwargs = {"impersonate": "chrome", "max_clients": 32}
@@ -115,7 +116,6 @@ class AsyncDownloader:
         return session
 
     def _evict_session(self, adapter_ip: Optional[str]) -> None:
-        """Closes and removes a session from pool upon socket failure."""
         s = self._session_pool.pop(adapter_ip, None)
         if s and not getattr(s, "_closed", False):
             try:
@@ -124,48 +124,52 @@ class AsyncDownloader:
                 pass
 
     def set_concurrency(self, limit: int) -> None:
-        """Updates max simultaneous downloads limit."""
         self.max_concurrency = max(1, min(12, limit))
+        self.trigger_queue_processing()
 
-    def add_task(self, original_url: str, destination_dir: str) -> DownloadTask:
-        """Adds a new URL to the download queue and preserves natural part ordering."""
-        cand_name = "download.bin"
-        import urllib.parse
+    @staticmethod
+    def _extract_candidate_filename(original_url: str) -> str:
         parsed = urllib.parse.urlparse(original_url)
         if parsed.fragment:
-            cand_name = urllib.parse.unquote(parsed.fragment)
-        elif parsed.path:
+            return urllib.parse.unquote(parsed.fragment)
+        if parsed.path:
             segs = [s for s in parsed.path.split("/") if s]
             if segs:
-                cand_name = segs[-1]
+                return urllib.parse.unquote(segs[-1])
+        return "download.bin"
 
+    def add_task(self, original_url: str, destination_dir: str, sort: bool = True) -> DownloadTask:
+        cand_name = self._extract_candidate_filename(original_url)
         task = DownloadTask(
             original_url=original_url,
             destination_dir=destination_dir,
             filename=cand_name,
         )
         self.tasks[task.id] = task
-        self.sort_tasks("natural_part")
+        if sort:
+            self.sort_tasks("natural_part")
         self.trigger_queue_processing()
         return task
 
+    def add_tasks_batch(self, urls: List[str], destination_dir: str) -> List[DownloadTask]:
+        """Batch-inserts multiple URLs and sorts only once in O(N log N) time."""
+        created = [self.add_task(u, destination_dir, sort=False) for u in urls]
+        if created:
+            self.sort_tasks("natural_part")
+            self.trigger_queue_processing()
+        return created
+
     def sort_tasks(self, criterion: str = "natural_part") -> None:
-        """Sorts download tasks by natural part number, status, progress, or size."""
         def natural_key(text: str):
-            return [int(c) if c.isdigit() else c.lower() for c in re.split(r'(\d+)', text or "")]
+            return [
+                int(c) if c.isdigit() else c.lower()
+                for c in self._NATURAL_RE.split(text or "")
+            ]
 
         def get_sort_name(t: DownloadTask) -> str:
             if t.filename and t.filename != "download.bin":
                 return t.filename
-            import urllib.parse
-            p = urllib.parse.urlparse(t.original_url)
-            if p.fragment:
-                return urllib.parse.unquote(p.fragment)
-            if p.path:
-                segs = [s for s in p.path.split('/') if s]
-                if segs:
-                    return segs[-1]
-            return t.original_url
+            return self._extract_candidate_filename(t.original_url)
 
         items = list(self.tasks.items())
         if criterion == "natural_part":
@@ -189,7 +193,6 @@ class AsyncDownloader:
         self.trigger_queue_processing()
 
     def reorder_task(self, task_id: str, direction: str) -> bool:
-        """Moves a task to top, up, or down in the download queue."""
         if task_id not in self.tasks:
             return False
         keys = list(self.tasks.keys())
@@ -203,20 +206,17 @@ class AsyncDownloader:
             keys[idx], keys[idx + 1] = keys[idx + 1], keys[idx]
         else:
             return False
-
         self.tasks = {k: self.tasks[k] for k in keys}
         self.trigger_queue_processing()
         return True
 
     def clear_completed(self) -> int:
-        """Removes all completed tasks from the queue."""
         to_remove = [tid for tid, t in self.tasks.items() if t.status == TaskStatus.COMPLETED]
         for tid in to_remove:
             del self.tasks[tid]
         return len(to_remove)
 
     def clear_all(self) -> int:
-        """Cancels and purges all tasks from the queue."""
         self.pause_all()
         count = len(self.tasks)
         self.tasks.clear()
@@ -224,7 +224,6 @@ class AsyncDownloader:
 
     @staticmethod
     def open_download_folder(folder_path: str) -> bool:
-        """Opens the download directory in Windows File Explorer."""
         try:
             if os.path.exists(folder_path):
                 subprocess.Popen(["explorer.exe", folder_path])
@@ -234,7 +233,6 @@ class AsyncDownloader:
         return False
 
     def reveal_task_file(self, task_id: str) -> bool:
-        """Highlights the task file in Windows File Explorer."""
         task = self.tasks.get(task_id)
         if not task:
             return False
@@ -253,13 +251,12 @@ class AsyncDownloader:
         return False
 
     def pause_task(self, task_id: str) -> bool:
-        """Pauses an active or queued download."""
         task = self.tasks.get(task_id)
         if not task:
             return False
-
         if task.status in (TaskStatus.DOWNLOADING, TaskStatus.RESOLVING):
             task.status = TaskStatus.PAUSED
+            task.speed_bytes_sec = 0.0
             if task_id in self._active_async_tasks:
                 self._active_async_tasks[task_id].cancel()
             return True
@@ -269,11 +266,9 @@ class AsyncDownloader:
         return False
 
     def resume_task(self, task_id: str) -> bool:
-        """Resumes a paused or failed task."""
         task = self.tasks.get(task_id)
         if not task:
             return False
-
         if task.status in (TaskStatus.PAUSED, TaskStatus.FAILED):
             task.status = TaskStatus.QUEUED
             task.error_message = None
@@ -300,13 +295,15 @@ class AsyncDownloader:
 
     def remove_task(self, task_id: str) -> bool:
         self.pause_task(task_id)
+        self._pinned_handoff_ip.pop(task_id, None)
+        self._task_assigned_ip.pop(task_id, None)
         if task_id in self.tasks:
             del self.tasks[task_id]
             return True
         return False
 
     async def handoff_task_to_adapter(self, task_id: str, target_ip: str) -> bool:
-        """Manually or autonomously hands off an active download to a specific network adapter."""
+        """Hands off an active download to a specific network adapter and pins it."""
         task = self.tasks.get(task_id)
         if not task or task.status != TaskStatus.DOWNLOADING:
             return False
@@ -317,9 +314,8 @@ class AsyncDownloader:
 
         current_ip = self._task_assigned_ip.get(task_id)
         if current_ip == target_ip:
-            return False  # Already on target adapter
+            return False
 
-        # Record hand-off event
         event = {
             "timestamp": time.time(),
             "task_id": task_id,
@@ -328,28 +324,33 @@ class AsyncDownloader:
             "to_adapter": f"{target_adapter.friendly_type} ({target_ip})",
         }
         self.handoff_events.append(event)
-        # Keep last 10 events
         if len(self.handoff_events) > 10:
             self.handoff_events.pop(0)
 
-        # Cancel current running coroutine to trigger clean checkpointing
-        if task_id in self._active_async_tasks:
-            self._active_async_tasks[task_id].cancel()
-
-        # Mark for immediate restart on target adapter
+        # Pin target adapter so _process_queue_loop dispatches onto target_ip
+        self._pinned_handoff_ip[task_id] = target_ip
         task.assigned_adapter = f"{target_adapter.friendly_type} ({target_ip})"
         self._task_assigned_ip[task_id] = target_ip
         task.status = TaskStatus.QUEUED
+
+        active_coro = self._active_async_tasks.get(task_id)
+        if active_coro and not active_coro.done():
+            active_coro.cancel()
+            try:
+                await active_coro
+            except (asyncio.CancelledError, Exception):
+                pass
+
+        task.status = TaskStatus.QUEUED
+        self.trigger_queue_processing()
         return True
 
     async def start(self) -> None:
-        """Starts the background worker queue and straggler watchdog loops."""
         self._is_running = True
         self._worker_loop_task = asyncio.create_task(self._process_queue_loop())
         self._straggler_loop_task = asyncio.create_task(self._straggler_watchdog_loop())
 
     async def stop(self) -> None:
-        """Stops all downloads and shuts down worker loops."""
         self._is_running = False
         self.pause_all()
         if self._worker_loop_task:
@@ -365,31 +366,42 @@ class AsyncDownloader:
         self._session_pool.clear()
 
     async def _process_queue_loop(self) -> None:
-        """Adaptive queue loop with pipelined pre-resolving and event-driven dispatch."""
         last_pre_resolve_time = 0.0
         while self._is_running:
             try:
-                # 1. Pipelined background pre-resolution of upcoming queued tasks
                 queued_tasks = [t for t in self.tasks.values() if t.status == TaskStatus.QUEUED]
-                now = time.time()
+                now = time.monotonic()
                 if queued_tasks and (now - last_pre_resolve_time >= 2.0):
                     last_pre_resolve_time = now
                     upcoming_urls = [t.original_url for t in queued_tasks[:5]]
                     asyncio.create_task(self.link_manager.pre_resolve_batch(upcoming_urls))
 
-                # 2. Check total active download streams
-                active_count = len([t for t in self.tasks.values() if t.status == TaskStatus.DOWNLOADING])
+                active_count = sum(
+                    1 for t in self.tasks.values() if t.status in (TaskStatus.DOWNLOADING, TaskStatus.RESOLVING)
+                )
+                if active_count < self.max_concurrency and queued_tasks:
+                    for task in queued_tasks:
+                        if active_count >= self.max_concurrency:
+                            break
+                        if task.id in self._active_async_tasks and not self._active_async_tasks[task.id].done():
+                            continue
 
-                if active_count < self.max_concurrency:
-                    # Select best available adapter based on EWMA speed & quotas
-                    best_adapter = self.net_manager.get_best_available_adapter(self.max_concurrency)
-                    if best_adapter and queued_tasks:
-                        task = queued_tasks[0]
-                        if task.id not in self._active_async_tasks or self._active_async_tasks[task.id].done():
-                            t = asyncio.create_task(self._execute_task_pipeline(task, best_adapter))
-                            self._active_async_tasks[task.id] = t
+                        # Check if task has a pinned handoff target adapter
+                        pinned_ip = self._pinned_handoff_ip.pop(task.id, None)
+                        chosen_adapter = (
+                            self.net_manager.get_adapter_by_ip(pinned_ip) if pinned_ip else None
+                        )
+                        if not chosen_adapter or not chosen_adapter.is_enabled or not chosen_adapter.is_up:
+                            chosen_adapter = self.net_manager.get_best_available_adapter(self.max_concurrency)
 
-                # Zero-latency wakeup on task completion or new tasks, with 0.3s fallback
+                        if not chosen_adapter:
+                            break
+
+                        task.status = TaskStatus.RESOLVING
+                        active_count += 1
+                        t = asyncio.create_task(self._execute_task_pipeline(task, chosen_adapter))
+                        self._active_async_tasks[task.id] = t
+
                 try:
                     await asyncio.wait_for(self._queue_event.wait(), timeout=0.3)
                     self._queue_event.clear()
@@ -401,42 +413,37 @@ class AsyncDownloader:
                 await asyncio.sleep(0.5)
 
     async def _straggler_watchdog_loop(self) -> None:
-        """Watchdog: Detects idle high-speed adapters and steals straggler downloads."""
         while self._is_running:
             try:
                 await asyncio.sleep(2.5)
+                if not self.work_stealing_enabled:
+                    continue
 
-                # Check if there are no unstarted queued tasks left
-                has_queued = any(t.status == TaskStatus.QUEUED for t in self.tasks.values())
-                if has_queued:
+                if any(t.status == TaskStatus.QUEUED for t in self.tasks.values()):
                     continue
 
                 adapters = [a for a in self.net_manager.get_available_adapters() if a.is_enabled and a.is_up]
                 if len(adapters) < 2:
                     continue
 
-                # Sort adapters by EWMA speed descending
                 adapters.sort(key=lambda a: a.ewma_speed_bytes, reverse=True)
                 fast_adapter = adapters[0]
                 slow_adapter = adapters[-1]
 
-                # Check if fast adapter is idle (0 active connections) or significantly faster
                 fast_speed = fast_adapter.ewma_speed_bytes
                 slow_speed = slow_adapter.ewma_speed_bytes
 
                 if fast_adapter.active_connections < fast_adapter.max_concurrency_cap:
-                    # Fast adapter has capacity. Check for stragglers on slower adapter
                     active_on_slow = [
                         t for t in self.tasks.values()
                         if t.status == TaskStatus.DOWNLOADING
                         and self._task_assigned_ip.get(t.id) == slow_adapter.ip_address
                     ]
-
                     for task in active_on_slow:
                         remaining = task.file_size - task.downloaded_bytes
-                        # If more than 50 MB remaining and fast adapter is at least 2.0x faster
-                        if remaining > 50 * 1024 * 1024 and (fast_speed > 2.0 * slow_speed or slow_speed < 1024 * 1024):
-                            # Steal the task!
+                        if remaining > 50 * 1024 * 1024 and (
+                            fast_speed > 2.0 * slow_speed or slow_speed < 1024 * 1024
+                        ):
                             await self.handoff_task_to_adapter(task.id, fast_adapter.ip_address)
                             break
             except asyncio.CancelledError:
@@ -445,12 +452,10 @@ class AsyncDownloader:
                 await asyncio.sleep(2.0)
 
     async def _execute_task_pipeline(self, task: DownloadTask, adapter: NetworkAdapter) -> None:
-        """Executes the resolve -> stream pipeline for a task on the allocated adapter."""
         interface_ip = adapter.ip_address
         task.assigned_adapter = f"{adapter.friendly_type} ({interface_ip})"
         self._task_assigned_ip[task.id] = interface_ip
 
-        # 1. Resolve direct link (using pre-resolved cache if available) with retry
         task.status = TaskStatus.RESOLVING
         max_resolve_retries = max(1, self.max_retries)
         resolve_success = False
@@ -460,7 +465,7 @@ class AsyncDownloader:
                 return
             try:
                 direct_url, filename, expected_size = await self.link_manager.resolve_link(
-                    task.original_url, interface=interface_ip
+                    task.original_url, interface=interface_ip, use_cache=(r_attempt == 0)
                 )
                 task.direct_url = direct_url
                 if filename and (task.filename == "download.bin" or not task.filename):
@@ -469,6 +474,10 @@ class AsyncDownloader:
                     task.file_size = expected_size
                 resolve_success = True
                 break
+            except asyncio.CancelledError:
+                if task.status not in (TaskStatus.QUEUED, TaskStatus.PAUSED):
+                    task.status = TaskStatus.PAUSED
+                return
             except Exception as exc:
                 err_str = str(exc)
                 if "404" in err_str or "Dead link" in err_str:
@@ -481,24 +490,26 @@ class AsyncDownloader:
                 else:
                     task.status = TaskStatus.FAILED
                     task.error_message = f"Resolve error: {err_str}"
-                    # Rapid failure circuit breaker: pause briefly to prevent cascading failure loop down queue
                     await asyncio.sleep(1.5)
                     return
 
         if not resolve_success or not task.direct_url:
             return
 
-        # 2. Download file stream with Range resuming
         task.status = TaskStatus.DOWNLOADING
         self.net_manager.increment_connections(interface_ip)
         try:
             await self._download_stream(task, interface_ip)
         except asyncio.CancelledError:
-            if task.status != TaskStatus.PAUSED:
+            if task.status not in (TaskStatus.QUEUED, TaskStatus.PAUSED):
                 task.status = TaskStatus.PAUSED
+            task.speed_bytes_sec = 0.0
         except Exception as exc:
             err_str = str(exc)
-            if "404" in err_str or "Dead link" in err_str or "HTML page" in err_str:
+            task.speed_bytes_sec = 0.0
+            if "HTML page" in err_str:
+                self.link_manager.invalidate_cache(task.original_url)
+            if "404" in err_str or "Dead link" in err_str:
                 task.status = TaskStatus.FAILED
                 task.error_message = err_str
             else:
@@ -515,30 +526,26 @@ class AsyncDownloader:
 
     @staticmethod
     def _preallocate_file(filepath: str, size: int) -> None:
-        """Instantly pre-allocates a sparse target file on disk to reserve space."""
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
         if not os.path.exists(filepath) or os.path.getsize(filepath) < size:
-            with open(filepath, "wb") as f:
+            mode = "r+b" if os.path.exists(filepath) else "wb"
+            with open(filepath, mode) as f:
                 f.seek(size - 1)
                 f.write(b"\0")
 
     async def _download_stream(self, task: DownloadTask, interface_ip: Optional[str]) -> None:
-        """High-throughput download router with parallel multi-segment acceleration and single-stream fallback."""
         os.makedirs(task.destination_dir, exist_ok=True)
 
-        # Probe file size & Range support if not already determined
         if task.file_size <= 0:
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
                 "Referer": "https://fuckingfast.co/",
                 "Range": "bytes=0-0",
             }
-            s_kwargs = {"impersonate": "chrome"}
-            if interface_ip:
-                s_kwargs["interface"] = interface_ip
             try:
-                async with requests.AsyncSession(**s_kwargs) as s:
-                    probe = await s.get(task.direct_url, headers=headers, stream=True, timeout=20)
+                session = await self._get_session(interface_ip)
+                probe = await session.get(task.direct_url, headers=headers, stream=True, timeout=20)
+                try:
                     if probe.status_code == 206:
                         cr = probe.headers.get("content-range", "")
                         if "/" in cr:
@@ -549,10 +556,11 @@ class AsyncDownloader:
                         if cl:
                             task.file_size = int(cl)
                         task.supports_range = False
+                finally:
+                    await probe.aclose()
             except Exception:
                 pass
 
-        # Trigger parallel segmented chunking if file >= min_segment_file_size_mb and Range supported
         min_bytes = max(1, self.min_segment_file_size_mb) * 1024 * 1024
         if task.supports_range and task.file_size >= min_bytes and self.segments_per_file > 1:
             try:
@@ -565,18 +573,14 @@ class AsyncDownloader:
                 else:
                     raise
 
-        # Single-stream fallback
         await self._download_single_stream(task, interface_ip)
 
     async def _download_segmented_stream(self, task: DownloadTask, primary_ip: Optional[str]) -> None:
-        """Downloads file partitioned into parallel byte-range segments directly into sparse file."""
         part_filepath = os.path.join(task.destination_dir, f"{task.filename}.part")
         final_filepath = os.path.join(task.destination_dir, task.filename)
 
-        # 1. Pre-allocate sparse file
-        self._preallocate_file(part_filepath, task.file_size)
+        await asyncio.to_thread(self._preallocate_file, part_filepath, task.file_size)
 
-        # 2. Partition into segments
         num_segments = max(1, min(16, self.segments_per_file))
         if not task.segments or len(task.segments) != num_segments:
             seg_size = task.file_size // num_segments
@@ -588,11 +592,9 @@ class AsyncDownloader:
                     Segment(index=i, start_byte=start, end_byte=end, downloaded_bytes=0, status="QUEUED")
                 )
 
-        # Check existing segment progress if resuming
-        total_pre_existing = sum(s.downloaded_bytes for s in task.segments)
-        task.downloaded_bytes = total_pre_existing
+        task.downloaded_bytes = sum(s.downloaded_bytes for s in task.segments)
 
-        # Allocate adapters across segments using EWMA weighting or configured bonding strategy
+        # If task was explicitly handed off to primary_ip, prefer primary_ip; otherwise use bonding strategy
         allocated_adapters = self.net_manager.allocate_segments_to_adapters(
             len(task.segments), strategy=getattr(self, "bonding_strategy", "ewma")
         )
@@ -611,118 +613,149 @@ class AsyncDownloader:
 
             adapter_ip = adapter.ip_address if adapter else primary_ip
             max_seg_retries = max(1, self.max_retries)
+            # Track extra segment connections on secondary adapters
+            counted_extra_conn = adapter_ip and adapter_ip != primary_ip
+            if counted_extra_conn:
+                self.net_manager.increment_connections(adapter_ip)
 
-            for attempt in range(max_seg_retries):
-                if task.status != TaskStatus.DOWNLOADING:
-                    return
-
-                segment.status = "DOWNLOADING"
-                curr_offset = segment.start_byte + segment.downloaded_bytes
-                headers = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
-                    "Referer": "https://fuckingfast.co/",
-                    "Range": f"bytes={curr_offset}-{segment.end_byte}",
-                    "Connection": "keep-alive",
-                }
-
-                f = None
-                try:
-                    session = await self._get_session(adapter_ip)
-                    resp = await session.get(task.direct_url, headers=headers, stream=True, timeout=30)
-                    if resp.status_code not in (200, 206):
-                        raise ValueError(f"Segment {segment.index} failed with HTTP {resp.status_code}")
-
-                    seg_last_check = time.time()
-                    seg_bytes_since = 0
-
-                    f = open(part_filepath, "r+b")
-                    await asyncio.to_thread(f.seek, curr_offset)
-
-                    async for chunk in resp.aiter_content(chunk_buffer):
-                        if task.status != TaskStatus.DOWNLOADING:
-                            break
-                        if chunk:
-                            await asyncio.to_thread(f.write, chunk)
-                            c_len = len(chunk)
-                            segment.downloaded_bytes += c_len
-                            task.downloaded_bytes += c_len
-                            seg_bytes_since += c_len
-
-                            # Enforce global speed limit if configured
-                            if self.speed_limit_mbps > 0:
-                                await self._token_limiter.consume(c_len)
-
-                            if adapter_ip:
-                                self.net_manager.record_chunk_transfer(adapter_ip, c_len)
-
-                            now = time.time()
-                            delta = now - seg_last_check
-                            if delta >= 0.5:
-                                seg_spd = seg_bytes_since / delta
-                                segment.speed_bytes_sec = seg_spd
-                                seg_bytes_since = 0
-                                seg_last_check = now
-
-                                # Race-condition-free aggregate speed calculation
-                                task.speed_bytes_sec = sum(s.speed_bytes_sec for s in task.segments)
-                                rem = max(0, task.file_size - task.downloaded_bytes)
-                                task.eta_seconds = (
-                                    int(rem / task.speed_bytes_sec)
-                                    if task.speed_bytes_sec > 0 and rem > 0
-                                    else None
-                                )
-
-                    if segment.downloaded_bytes >= segment.total_bytes:
-                        segment.status = "COMPLETED"
-                        segment.speed_bytes_sec = 0.0
-                        return
-                    elif task.status != TaskStatus.DOWNLOADING:
-                        return
-                    else:
-                        raise IOError(f"Segment {segment.index} stream truncated prematurely.")
-
-                except Exception:
-                    self._evict_session(adapter_ip)
+            try:
+                for attempt in range(max_seg_retries):
                     if task.status != TaskStatus.DOWNLOADING:
                         return
-                    if attempt == max_seg_retries - 1:
-                        segment.status = "FAILED"
-                        raise
-                    await asyncio.sleep(min(2.0, 0.5 * (2 ** attempt)))
-                finally:
-                    if f:
-                        await asyncio.to_thread(f.close)
+                    segment.status = "DOWNLOADING"
+                    curr_offset = segment.start_byte + segment.downloaded_bytes
+                    headers = {
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+                        "Referer": "https://fuckingfast.co/",
+                        "Range": f"bytes={curr_offset}-{segment.end_byte}",
+                        "Connection": "keep-alive",
+                    }
+                    f = None
+                    resp = None
+                    write_buf = bytearray()
+                    try:
+                        session = await self._get_session(adapter_ip)
+                        resp = await session.get(task.direct_url, headers=headers, stream=True, timeout=30)
+                        if resp.status_code not in (200, 206):
+                            raise ValueError(f"Segment {segment.index} failed with HTTP {resp.status_code}")
 
-        # Run all segment workers concurrently with per-segment isolation and retry
+                        seg_last_check = time.monotonic()
+                        seg_bytes_since = 0
+
+                        f = await asyncio.to_thread(open, part_filepath, "r+b")
+                        await asyncio.to_thread(f.seek, curr_offset)
+
+                        async for chunk in resp.aiter_content(chunk_buffer):
+                            if task.status != TaskStatus.DOWNLOADING:
+                                break
+                            if chunk:
+                                c_len = len(chunk)
+                                # Clamp in case server sends past end_byte
+                                remaining_in_seg = segment.total_bytes - (segment.downloaded_bytes + len(write_buf))
+                                if remaining_in_seg <= 0:
+                                    break
+                                if c_len > remaining_in_seg:
+                                    chunk = chunk[:remaining_in_seg]
+                                    c_len = len(chunk)
+
+                                write_buf.extend(chunk)
+                                if len(write_buf) >= chunk_buffer:
+                                    payload_bytes = bytes(write_buf)
+                                    write_buf.clear()
+                                    await asyncio.to_thread(f.write, payload_bytes)
+                                    segment.downloaded_bytes += len(payload_bytes)
+                                    task.downloaded_bytes += len(payload_bytes)
+
+                                seg_bytes_since += c_len
+
+                                if self.speed_limit_mbps > 0:
+                                    await self._token_limiter.consume(c_len)
+
+                                if adapter_ip:
+                                    self.net_manager.record_chunk_transfer(adapter_ip, c_len)
+
+                                now = time.monotonic()
+                                delta = now - seg_last_check
+                                if delta >= 0.5:
+                                    segment.speed_bytes_sec = seg_bytes_since / delta
+                                    seg_bytes_since = 0
+                                    seg_last_check = now
+                                    task.speed_bytes_sec = sum(s.speed_bytes_sec for s in task.segments)
+                                    rem = max(0, task.file_size - task.downloaded_bytes)
+                                    task.eta_seconds = (
+                                        int(rem / task.speed_bytes_sec)
+                                        if task.speed_bytes_sec > 0 and rem > 0
+                                        else None
+                                    )
+
+                        # Flush any remaining buffered bytes to disk
+                        if write_buf and f:
+                            payload_bytes = bytes(write_buf)
+                            write_buf.clear()
+                            await asyncio.to_thread(f.write, payload_bytes)
+                            segment.downloaded_bytes += len(payload_bytes)
+                            task.downloaded_bytes += len(payload_bytes)
+
+                        if segment.downloaded_bytes >= segment.total_bytes:
+                            segment.status = "COMPLETED"
+                            segment.speed_bytes_sec = 0.0
+                            return
+                        elif task.status != TaskStatus.DOWNLOADING:
+                            segment.speed_bytes_sec = 0.0
+                            return
+                        else:
+                            raise IOError(f"Segment {segment.index} stream truncated prematurely.")
+                    except asyncio.CancelledError:
+                        if write_buf and f:
+                            payload_bytes = bytes(write_buf)
+                            write_buf.clear()
+                            await asyncio.to_thread(f.write, payload_bytes)
+                            segment.downloaded_bytes += len(payload_bytes)
+                            task.downloaded_bytes += len(payload_bytes)
+                        segment.speed_bytes_sec = 0.0
+                        raise
+                    except Exception:
+                        segment.speed_bytes_sec = 0.0
+                        self._evict_session(adapter_ip)
+                        if task.status != TaskStatus.DOWNLOADING:
+                            return
+                        if attempt == max_seg_retries - 1:
+                            segment.status = "FAILED"
+                            raise
+                        await asyncio.sleep(min(2.0, 0.5 * (2 ** attempt)))
+                    finally:
+                        if resp is not None:
+                            try:
+                                await resp.aclose()
+                            except Exception:
+                                pass
+                        if f is not None:
+                            await asyncio.to_thread(f.close)
+            finally:
+                if counted_extra_conn:
+                    self.net_manager.decrement_connections(adapter_ip)
+
         active_pairs = [
             (seg, ad) for seg, ad in zip(task.segments, allocated_adapters) if seg.status != "COMPLETED"
         ]
         await asyncio.gather(*(segment_worker(seg, ad) for seg, ad in active_pairs))
 
-        # Finalize if completed
         if task.status == TaskStatus.DOWNLOADING:
             all_done = all(seg.status == "COMPLETED" for seg in task.segments)
             if all_done and task.downloaded_bytes >= task.file_size:
-                if os.path.exists(final_filepath):
-                    os.remove(final_filepath)
                 if os.path.exists(part_filepath):
-                    os.rename(part_filepath, final_filepath)
-
+                    os.replace(part_filepath, final_filepath)
                 task.status = TaskStatus.COMPLETED
                 task.speed_bytes_sec = 0.0
                 task.eta_seconds = 0
-                if self.on_complete_callback:
-                    self.on_complete_callback(task)
+                self._fire_complete_callback(task)
 
     async def _download_single_stream(self, task: DownloadTask, interface_ip: Optional[str]) -> None:
-        """Streams file chunks to disk using a single HTTP connection (fallback mode)."""
         part_filepath = os.path.join(task.destination_dir, f"{task.filename}.part")
         final_filepath = os.path.join(task.destination_dir, task.filename)
 
-        existing_bytes = 0
-        if os.path.exists(part_filepath):
-            existing_bytes = os.path.getsize(part_filepath)
-            task.downloaded_bytes = existing_bytes
+        existing_bytes = os.path.getsize(part_filepath) if os.path.exists(part_filepath) else 0
+        task.downloaded_bytes = existing_bytes
 
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
@@ -730,15 +763,14 @@ class AsyncDownloader:
             "Accept": "*/*",
             "Connection": "keep-alive",
         }
-
         if existing_bytes > 0:
             headers["Range"] = f"bytes={existing_bytes}-"
 
+        resp = None
         try:
             session = await self._get_session(interface_ip)
             resp = await session.get(task.direct_url, headers=headers, stream=True, timeout=30)
 
-            # Content-Type guardrail
             content_type = resp.headers.get("content-type", "").lower()
             if content_type.startswith("text/html"):
                 raise ValueError("Server returned an HTML page instead of binary file. Direct link may have expired.")
@@ -762,12 +794,9 @@ class AsyncDownloader:
                 task.downloaded_bytes = existing_bytes
                 task.file_size = existing_bytes
                 if os.path.exists(part_filepath):
-                    if os.path.exists(final_filepath):
-                        os.remove(final_filepath)
-                    os.rename(part_filepath, final_filepath)
+                    os.replace(part_filepath, final_filepath)
                 task.status = TaskStatus.COMPLETED
-                if self.on_complete_callback:
-                    self.on_complete_callback(task)
+                self._fire_complete_callback(task)
                 return
             else:
                 raise ValueError(f"HTTP {resp.status_code} received from server.")
@@ -776,7 +805,7 @@ class AsyncDownloader:
                 task.file_size = existing_bytes + int(resp.headers["content-length"])
 
             chunk_size = max(65536, self.buffer_size_kb * 1024)
-            last_speed_check = time.time()
+            last_speed_check = time.monotonic()
             bytes_since_last_check = 0
             is_first_chunk = True
 
@@ -784,39 +813,37 @@ class AsyncDownloader:
                 async for chunk in resp.aiter_content(chunk_size):
                     if task.status != TaskStatus.DOWNLOADING:
                         break
-
                     if chunk:
                         if is_first_chunk and write_mode == "wb":
                             is_first_chunk = False
                             chunk_head = chunk[:20].lower()
-                            if chunk_head.startswith(b"<!doctype html") or chunk_head.startswith(b"<html"):
-                                raise ValueError("Server returned an HTML page instead of binary file. Direct link may have expired.")
+                            if chunk_head.startswith((b"<!doctype html", b"<html")):
+                                raise ValueError(
+                                    "Server returned an HTML page instead of binary file. Direct link may have expired."
+                                )
 
                         await f.write(chunk)
                         chunk_len = len(chunk)
                         task.downloaded_bytes += chunk_len
                         bytes_since_last_check += chunk_len
 
-                        # Enforce global speed limit if configured
                         if self.speed_limit_mbps > 0:
                             await self._token_limiter.consume(chunk_len)
 
                         if interface_ip:
                             self.net_manager.record_chunk_transfer(interface_ip, chunk_len)
 
-                        now = time.time()
+                        now = time.monotonic()
                         delta = now - last_speed_check
                         if delta >= 0.5:
                             speed = bytes_since_last_check / delta
                             task.speed_bytes_sec = speed
                             bytes_since_last_check = 0
                             last_speed_check = now
-
                             remaining_bytes = max(0, task.file_size - task.downloaded_bytes)
-                            if speed > 0 and remaining_bytes > 0:
-                                task.eta_seconds = int(remaining_bytes / speed)
-                            else:
-                                task.eta_seconds = None
+                            task.eta_seconds = (
+                                int(remaining_bytes / speed) if speed > 0 and remaining_bytes > 0 else None
+                            )
 
             if task.status == TaskStatus.DOWNLOADING:
                 if task.file_size > 0 and task.downloaded_bytes < task.file_size:
@@ -828,16 +855,19 @@ class AsyncDownloader:
                         f"Suspiciously small download ({task.downloaded_bytes} bytes). Possible broken link."
                     )
 
-                if os.path.exists(final_filepath):
-                    os.remove(final_filepath)
                 if os.path.exists(part_filepath):
-                    os.rename(part_filepath, final_filepath)
+                    os.replace(part_filepath, final_filepath)
 
                 task.status = TaskStatus.COMPLETED
                 task.speed_bytes_sec = 0.0
                 task.eta_seconds = 0
-                if self.on_complete_callback:
-                    self.on_complete_callback(task)
+                self._fire_complete_callback(task)
         except Exception:
             self._evict_session(interface_ip)
             raise
+        finally:
+            if resp is not None:
+                try:
+                    await resp.aclose()
+                except Exception:
+                    pass

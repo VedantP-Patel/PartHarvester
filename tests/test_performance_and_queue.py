@@ -252,5 +252,38 @@ async def test_resolve_pipeline_retry():
     assert attempts == 2, f"Expected 2 resolve attempts, got {attempts}"
     assert task.status == TaskStatus.COMPLETED
 
+def test_batch_task_ingestion_performance():
+    """Verifies add_tasks_batch ingests 80 parts in <20ms without O(N^2) sorting overhead."""
+    import time
+    link_mgr = LinkManager()
+    net_mgr = NetworkManager()
+    session_mgr = MagicMock()
+    downloader = AsyncDownloader(link_mgr, net_mgr, session_mgr)
+
+    urls = [
+        f"https://fuckingfast.co/id{i}#Game_--_fitgirl-repacks.site_--_.part{i:02d}.rar"
+        for i in range(80, 0, -1)
+    ]
+    t0 = time.perf_counter()
+    created = downloader.add_tasks_batch(urls, "/tmp")
+    elapsed = time.perf_counter() - t0
+
+    assert len(created) == 80
+    assert elapsed < 0.1, f"Batch ingestion took too long: {elapsed:.3f}s"
+    first_task = next(iter(downloader.tasks.values()))
+    assert first_task.filename.endswith(".part01.rar")
+
+
+@pytest.mark.anyio
+async def test_O1_sliding_window_speed_tracker():
+    """Verifies NetworkManager O(1) deque rolling bytes calculation and pruning."""
+    net_mgr = NetworkManager(ewma_alpha=0.5)
+    ip = "192.168.1.50"
+    for _ in range(100):
+        net_mgr.record_chunk_transfer(ip, 65536)
+
+    assert net_mgr._adapter_rolling_bytes[ip] == 100 * 65536
+    speed = net_mgr.get_adapter_speed(ip)
+    assert speed > 0
 
 

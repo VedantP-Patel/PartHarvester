@@ -1,26 +1,37 @@
 """PartHarvester Application Entry Point.
 
-Starts the FastAPI server with Uvicorn and automatically launches the user's
-default web browser to the dashboard.
+Starts the FastAPI server with Uvicorn and launches the user's default web
+browser to the dashboard once the server socket is actually accepting
+connections.
 """
 
-import sys
+import socket
 import threading
 import time
 import webbrowser
+
 import uvicorn
+
+HOST = "127.0.0.1"
+PORT = 5000
 
 
 def open_browser():
-    """Opens browser after slight delay to ensure server is listening."""
-    time.sleep(1.2)
-    webbrowser.open("http://127.0.0.1:5000")
+    """Polls the server socket until bound, then launches the dashboard."""
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(0.2)
+            if sock.connect_ex((HOST, PORT)) == 0:
+                webbrowser.open(f"http://{HOST}:{PORT}")
+                return
+        time.sleep(0.1)
 
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("  🚀 PartHarvester — Multi-Part Repack Batch Downloader")
-    print("  🌐 Dashboard: http://127.0.0.1:5000")
+    print("    PartHarvester - Multi-Part Repack Batch Downloader")
+    print(f"    Dashboard: http://{HOST}:{PORT}")
     print("=" * 60)
 
     # Launch browser in a background thread
@@ -29,9 +40,8 @@ if __name__ == "__main__":
     # Start FastAPI server
     uvicorn.run(
         "server.app:app",
-        host="127.0.0.1",
-        port=5000,
+        host=HOST,
+        port=PORT,
         log_level="info",
         access_log=False,
     )
-

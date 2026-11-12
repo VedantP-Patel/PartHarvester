@@ -136,21 +136,28 @@ class FuckingFastResolver:
                 filesize = 0
                 filename = expected_filename
 
-                content_range = probe_resp.headers.get("content-range", "")
-                if "/" in content_range:
-                    try:
-                        filesize = int(content_range.split("/")[-1])
-                    except ValueError:
-                        pass
+                try:
+                    content_range = probe_resp.headers.get("content-range", "")
+                    if "/" in content_range:
+                        try:
+                            filesize = int(content_range.split("/")[-1])
+                        except ValueError:
+                            pass
 
-                cd = probe_resp.headers.get("content-disposition", "")
-                if "filename*=" in cd:
-                    cd_name = cd.split("filename*=")[-1].strip().strip('"\'')
-                    if "''" in cd_name:
-                        cd_name = cd_name.split("''")[-1]
-                    filename = urllib.parse.unquote(cd_name)
-                elif "filename=" in cd and not filename:
-                    filename = cd.split("filename=")[-1].strip().strip('"\'')
+                    cd = probe_resp.headers.get("content-disposition", "")
+                    if "filename*=" in cd:
+                        cd_name = cd.split("filename*=")[-1].strip().strip('"\'')
+                        if "''" in cd_name:
+                            cd_name = cd_name.split("''")[-1]
+                        filename = urllib.parse.unquote(cd_name)
+                    elif "filename=" in cd and not filename:
+                        filename = cd.split("filename=")[-1].strip().strip('"\'')
+                finally:
+                    # Release the streamed connection back to the pooled session
+                    try:
+                        await probe_resp.aclose()
+                    except Exception:
+                        pass
 
                 if not filename:
                     filename = f"{file_id}.rar"

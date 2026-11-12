@@ -65,13 +65,20 @@ class LinkManager:
                             )
                             if resp.status_code == 200:
                                 payload = resp.json()
-                                decrypted_text = decrypt_privatebin_payload(payload, key)
+                                # Offload CPU-heavy PBKDF2 + AES-GCM + zlib work off the event loop
+                                decrypted_text = await asyncio.to_thread(
+                                    decrypt_privatebin_payload, payload, key
+                                )
                                 return extract_links_from_text(decrypted_text)
                     except Exception:
                         pass
 
         # Standard extraction from multi-line or single text input
         return extract_links_from_text(raw_input)
+
+    def invalidate_cache(self, url: str) -> None:
+        """Evicts a stale or expired direct URL from the pre-resolution cache."""
+        self._pre_resolution_cache.pop(url, None)
 
     async def pre_resolve_batch(
         self,
@@ -86,7 +93,6 @@ class LinkManager:
         for url in to_process:
             self._pre_resolving_set.add(url)
             asyncio.create_task(self._resolve_and_cache(url, interface))
-            await asyncio.sleep(0.6)
 
     async def _resolve_and_cache(self, url: str, interface: Optional[str]) -> None:
         """Helper to resolve a link in the background and insert into cache."""

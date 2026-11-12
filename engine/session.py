@@ -6,6 +6,7 @@ so downloading resumes seamlessly across application restarts.
 
 import json
 import os
+import threading
 from typing import Any, Dict, List
 from engine.task import DownloadTask
 
@@ -15,6 +16,9 @@ class SessionManager:
 
     def __init__(self, filepath: str = "download_session.json"):
         self.filepath = filepath
+        # save_session may be called from worker threads (asyncio.to_thread) concurrently;
+        # serialize writers so they never clobber the shared .tmp file.
+        self._save_lock = threading.Lock()
 
     def load_session(self) -> Dict[str, Any]:
         """Loads saved session settings and tasks from disk."""
@@ -37,15 +41,18 @@ class SessionManager:
             return {"settings": {}, "tasks": []}
 
     def save_session(self, settings: Dict[str, Any], tasks: List[DownloadTask]) -> None:
-        """Saves current settings and tasks to disk."""
+        """Atomically saves current settings and tasks to disk."""
         try:
             data = {
                 "settings": settings,
                 "tasks": [task.model_dump() for task in tasks],
             }
-            with open(self.filepath, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2)
-        except Exception as e:
+            tmp_path = f"{self.filepath}.tmp"
+            with self._save_lock:
+                with open(tmp_path, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=2)
+                os.replace(tmp_path, self.filepath)
+        except Exception:
             # Non-fatal error saving session
             pass
 

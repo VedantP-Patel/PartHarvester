@@ -190,6 +190,16 @@ function renderBandwidthBar(adapters) {
   label.innerHTML = labelParts.join('');
 }
 
+function escapeHtml(str) {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function renderAdapters(adapters) {
   const container = document.getElementById('adapters-list');
   if (!adapters || adapters.length === 0) {
@@ -197,11 +207,22 @@ function renderAdapters(adapters) {
     return;
   }
 
-  container.innerHTML = adapters.map(a => `
-    <div class="adapter-item ${a.is_enabled ? 'adapter-enabled' : 'adapter-disabled'}">
+  // Drop any placeholder (loading / empty message) before keyed patching
+  container.querySelectorAll(':scope > :not([data-adapter-ip])').forEach(el => el.remove());
+
+  const existing = new Map();
+  container.querySelectorAll(':scope > [data-adapter-ip]').forEach(el => {
+    existing.set(el.getAttribute('data-adapter-ip'), el);
+  });
+
+  const seen = new Set();
+  adapters.forEach((a, index) => {
+    seen.add(a.ip_address);
+    const ip = escapeHtml(a.ip_address);
+    const html = `
       <div class="adapter-left">
         <label class="toggle-control-mini" title="${a.is_enabled ? 'Disable adapter' : 'Enable adapter'}">
-          <input type="checkbox" ${a.is_enabled ? 'checked' : ''} onchange="toggleAdapter('${a.ip_address}', this.checked)">
+          <input type="checkbox" ${a.is_enabled ? 'checked' : ''} onchange="toggleAdapter('${ip}', this.checked)">
           <span class="toggle-slider-mini"></span>
         </label>
         <div class="adapter-icon-frame">
@@ -209,10 +230,10 @@ function renderAdapters(adapters) {
         </div>
         <div class="adapter-meta">
           <div class="adapter-name">
-            <span>${a.name}</span>
-            <span class="adapter-type-tag">${a.friendly_type}</span>
+            <span>${escapeHtml(a.name)}</span>
+            <span class="adapter-type-tag">${escapeHtml(a.friendly_type)}</span>
           </div>
-          <div class="adapter-ip font-mono tabular">${a.ip_address}</div>
+          <div class="adapter-ip font-mono tabular">${ip}</div>
         </div>
       </div>
       <div class="adapter-right">
@@ -224,9 +245,30 @@ function renderAdapters(adapters) {
           <span class="quota-badge font-mono tabular">${a.allocated_slots || 1} Slots</span>
           <span class="conns-badge font-mono tabular">${a.active_connections || 0}/${a.max_concurrency_cap || 3} Streams</span>
         </div>
-      </div>
-    </div>
-  `).join('');
+      </div>`;
+    const className = `adapter-item ${a.is_enabled ? 'adapter-enabled' : 'adapter-disabled'}`;
+    const sig = className + '|' + html;
+
+    let el = existing.get(a.ip_address);
+    if (!el) {
+      el = document.createElement('div');
+      el.setAttribute('data-adapter-ip', a.ip_address);
+    }
+    // Compare against our own cached string: innerHTML round-trips are normalized by the
+    // browser and would never match the template literal.
+    if (el._sig !== sig) {
+      el.className = className;
+      el.innerHTML = html;
+      el._sig = sig;
+    }
+    if (container.children[index] !== el) {
+      container.insertBefore(el, container.children[index] || null);
+    }
+  });
+
+  existing.forEach((el, ip) => {
+    if (!seen.has(ip)) el.remove();
+  });
 }
 
 function getFilteredAndSortedTasks(tasks) {
@@ -268,7 +310,10 @@ function renderTasks(tasks, adapters) {
   const displayTasks = getFilteredAndSortedTasks(tasks);
 
   if (!displayTasks || displayTasks.length === 0) {
-    tbody.innerHTML = `
+    const emptyKey = searchQuery ? 'search' : 'queue';
+    if (tbody.dataset.empty !== emptyKey) {
+      tbody.dataset.empty = emptyKey;
+      tbody.innerHTML = `
       <tr>
         <td colspan="8">
           <div class="empty-state-frame">
@@ -280,17 +325,52 @@ function renderTasks(tasks, adapters) {
             <div class="empty-subtitle">${searchQuery ? 'Try adjusting your search filter keywords.' : 'Paste a <code>paste.fitgirl-repacks.site</code> URL or download links above to begin multi-part downloading.'}</div>
           </div>
         </td>
-      </tr>
-    `;
+      </tr>`;
+    }
     return;
+  }
+
+  // Leaving the empty state: clear the placeholder row once
+  if (tbody.dataset.empty) {
+    delete tbody.dataset.empty;
+    tbody.innerHTML = '';
   }
 
   const activeAdapters = (adapters || []).filter(a => a.is_enabled && a.is_up);
 
-  tbody.innerHTML = displayTasks.map(t => {
-    const pct = t.file_size > 0 ? ((t.downloaded_bytes / t.file_size) * 100).toFixed(1) : (t.status === 'COMPLETED' ? '100.0' : '0.0');
+  const existingRows = new Map();
+  tbody.querySelectorAll(':scope > tr[data-task-id]').forEach(row => {
+    existingRows.set(row.getAttribute('data-task-id'), row);
+  });
 
-    // Multi-segment progress visualizer
+  // Remove stale rows first so DOM indices below line up with displayTasks
+  const wanted = new Set(displayTasks.map(t => String(t.id)));
+  existingRows.forEach((row, id) => {
+    if (!wanted.has(id)) { row.remove(); existingRows.delete(id); }
+  });
+
+  displayTasks.forEach((t, index) => {
+    const pct = t.file_size > 0
+      ? ((t.downloaded_bytes / t.file_size) * 100).toFixed(1)
+      : (t.status === 'COMPLETED' ? '100.0' : '0.0');
+    const isDead = t.error_message && (t.error_message.includes('404') || t.error_message.includes('Dead link'));
+    const statusLabel = isDead ? 'DEAD LINK' : t.status;
+    const id = escapeHtml(t.id);
+
+    let row = existingRows.get(String(t.id));
+
+    // While the user has the "Switch Net" dropdown open, patch only the live numeric cells
+    // so the native <select> popup is not destroyed by a re-render.
+    const activeSelect = row ? row.querySelector('.adapter-hand-select') : null;
+    if (activeSelect && document.activeElement === activeSelect && t.status === 'DOWNLOADING') {
+      row.querySelector('.mini-progress-fill').style.width = `${pct}%`;
+      row.querySelector('.mini-progress-label').textContent = `${pct}%`;
+      row.querySelector('.size-cell').innerHTML = `${formatBytes(t.downloaded_bytes)} <span class="text-dim">/</span> ${formatBytes(t.file_size)}`;
+      row.querySelector('.speed-cell').textContent = formatSpeed(t.speed_bytes_sec);
+      row.querySelector('.eta-cell').textContent = formatEta(t.eta_seconds);
+      return;
+    }
+
     let segmentsHtml = '';
     if (t.segments && t.segments.length > 0) {
       segmentsHtml = `
@@ -298,30 +378,28 @@ function renderTasks(tasks, adapters) {
           ${t.segments.map(seg => {
             const segPct = seg.total_bytes > 0 ? Math.min(100, Math.round((seg.downloaded_bytes / seg.total_bytes) * 100)) : (seg.status === 'COMPLETED' ? 100 : 0);
             const color = seg.assigned_adapter && seg.assigned_adapter.includes('Wi-Fi') ? 'var(--accent-cyan)' : 'var(--status-success)';
-            return `<div class="segment-bar-chunk" style="width: ${100 / t.segments.length}%; background: ${color}; opacity: ${seg.status === 'COMPLETED' ? 1 : 0.65};" title="Segment ${seg.index + 1}: ${segPct}% (${seg.assigned_adapter || 'Auto'})"></div>`;
+            return `<div class="segment-bar-chunk" style="width: ${100 / t.segments.length}%; background: ${color}; opacity: ${seg.status === 'COMPLETED' ? 1 : 0.65};" title="Segment ${seg.index + 1}: ${segPct}% (${escapeHtml(seg.assigned_adapter || 'Auto')})"></div>`;
           }).join('')}
-        </div>
-      `;
+        </div>`;
     }
 
-    return `
-      <tr>
-        <td class="filename-cell" title="${t.filename}">
+    const rowHtml = `
+        <td class="filename-cell" title="${escapeHtml(t.filename)}">
           <div class="file-name-container">
             <svg class="file-svg-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
             </svg>
-            <span class="file-title">${t.filename}</span>
+            <span class="file-title">${escapeHtml(t.filename)}</span>
           </div>
-          ${t.error_message ? `<div class="file-diag-error font-mono">${t.error_message}</div>` : ''}
+          ${t.error_message ? `<div class="file-diag-error font-mono">${escapeHtml(t.error_message)}</div>` : ''}
           ${segmentsHtml}
         </td>
         <td class="adapter-select-cell">
-          <div class="adapter-bound-label font-mono">${t.assigned_adapter || 'Auto-Assigned'}</div>
+          <div class="adapter-bound-label font-mono">${escapeHtml(t.assigned_adapter || 'Auto-Assigned')}</div>
           ${t.status === 'DOWNLOADING' && activeAdapters.length > 1 ? `
-            <select class="adapter-hand-select font-mono" onchange="manualHandoff('${t.id}', this.value); this.value='';">
+            <select class="adapter-hand-select font-mono" onchange="manualHandoff('${id}', this.value); this.value='';">
               <option value="">Switch Net...</option>
-              ${activeAdapters.map(ad => `<option value="${ad.ip_address}">${ad.friendly_type} (${ad.ip_address})</option>`).join('')}
+              ${activeAdapters.map(ad => `<option value="${escapeHtml(ad.ip_address)}">${escapeHtml(ad.friendly_type)} (${escapeHtml(ad.ip_address)})</option>`).join('')}
             </select>
           ` : ''}
         </td>
@@ -335,44 +413,56 @@ function renderTasks(tasks, adapters) {
         <td class="tabular font-mono speed-cell">${t.status === 'DOWNLOADING' ? formatSpeed(t.speed_bytes_sec) : '--'}</td>
         <td class="tabular font-mono eta-cell text-dim">${t.status === 'DOWNLOADING' ? formatEta(t.eta_seconds) : '--'}</td>
         <td>
-          <span class="chip chip-${t.status.toLowerCase()}">
+          <span class="chip chip-${escapeHtml(String(t.status).toLowerCase())}">
             <span class="chip-dot"></span>
-            ${t.error_message && (t.error_message.includes('404') || t.error_message.includes('Dead link')) ? 'DEAD LINK' : t.status}
+            ${escapeHtml(statusLabel)}
           </span>
         </td>
         <td class="actions-cell">
           <div class="row-actions-group">
             ${t.status === 'DOWNLOADING' ? `
-              <button class="btn-row-action" title="Pause Download" onclick="pauseTask('${t.id}')">
+              <button class="btn-row-action" title="Pause Download" onclick="pauseTask('${id}')">
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
               </button>` : ''}
             ${t.status === 'PAUSED' || t.status === 'FAILED' ? `
-              <button class="btn-row-action btn-accent" title="Resume Download" onclick="resumeTask('${t.id}')">
+              <button class="btn-row-action btn-accent" title="Resume Download" onclick="resumeTask('${id}')">
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
               </button>` : ''}
-            <button class="btn-row-action btn-accent" title="Prioritize / Move to Top" onclick="reorderTask('${t.id}', 'top')">
+            <button class="btn-row-action btn-accent" title="Prioritize / Move to Top" onclick="reorderTask('${id}', 'top')">
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="18 15 12 9 6 15"/><line x1="6" y1="4" x2="18" y2="4"/></svg>
             </button>
-            <button class="btn-row-action" title="Move Up" onclick="reorderTask('${t.id}', 'up')">
+            <button class="btn-row-action" title="Move Up" onclick="reorderTask('${id}', 'up')">
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="18 15 12 9 6 15"/></svg>
             </button>
-            <button class="btn-row-action" title="Move Down" onclick="reorderTask('${t.id}', 'down')">
+            <button class="btn-row-action" title="Move Down" onclick="reorderTask('${id}', 'down')">
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
             </button>
-            <button class="btn-row-action" title="Reveal in Windows Explorer" onclick="openTaskFile('${t.id}')">
+            <button class="btn-row-action" title="Reveal in Windows Explorer" onclick="openTaskFile('${id}')">
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
             </button>
-            <button class="btn-row-action" title="Copy Download URL" onclick="copyLink('${t.original_url}')">
+            <button class="btn-row-action" title="Copy Download URL" data-url="${escapeHtml(t.original_url)}" onclick="copyLink(this.getAttribute('data-url'))">
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
             </button>
-            <button class="btn-row-action btn-danger" title="Remove Task" onclick="removeTask('${t.id}')">
+            <button class="btn-row-action btn-danger" title="Remove Task" onclick="removeTask('${id}')">
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
             </button>
           </div>
-        </td>
-      </tr>
-    `;
-  }).join('');
+        </td>`;
+
+    if (!row) {
+      row = document.createElement('tr');
+      row.setAttribute('data-task-id', t.id);
+    }
+    // Compare against our cached string (the browser normalizes innerHTML, so comparing
+    // row.innerHTML to the template literal would never match and re-render every tick).
+    if (row._sig !== rowHtml) {
+      row.innerHTML = rowHtml;
+      row._sig = rowHtml;
+    }
+    if (tbody.children[index] !== row) {
+      tbody.insertBefore(row, tbody.children[index] || null);
+    }
+  });
 }
 
 function renderExtractions(jobs) {
