@@ -97,8 +97,14 @@ class FuckingFastResolver:
                     raise ValueError("Dead link (HTTP 404 Not Found on FuckingFast). File was removed or DMCA'd.")
 
                 if resp.status_code != 200:
+                    body_head = resp.text[:2500]
+                if (
+                    "cf-browser-verification" in body_head
+                    or "challenge-platform" in body_head
+                    or "<title>Just a moment...</title>" in body_head
+                ):
                     cls._evict_session(interface, profile)
-                    await asyncio.sleep(1.0)
+                    await asyncio.sleep(1.0 * (attempt + 1))
                     continue
 
                 # 2. Check for hx-post path or use standard /f/{file_id}/go
@@ -125,17 +131,18 @@ class FuckingFastResolver:
                 if not direct_url:
                     raise ValueError("Could not extract direct dl.fuckingfast.co link from HTMX response.")
 
-                # 4. Probe the direct CDN stream to get exact filesize and filename
+                # 4. Only probe CDN during resolution if URL fragment lacked a filename
+                if expected_filename:
+                    return direct_url, expected_filename, 0
+
                 probe_resp = await session.get(
                     direct_url,
                     headers={"Referer": clean_url, "Range": "bytes=0-0"},
                     stream=True,
                     timeout=timeout,
                 )
-
                 filesize = 0
-                filename = expected_filename
-
+                filename = ""
                 try:
                     content_range = probe_resp.headers.get("content-range", "")
                     if "/" in content_range:
@@ -143,26 +150,21 @@ class FuckingFastResolver:
                             filesize = int(content_range.split("/")[-1])
                         except ValueError:
                             pass
-
                     cd = probe_resp.headers.get("content-disposition", "")
                     if "filename*=" in cd:
                         cd_name = cd.split("filename*=")[-1].strip().strip('"\'')
                         if "''" in cd_name:
                             cd_name = cd_name.split("''")[-1]
                         filename = urllib.parse.unquote(cd_name)
-                    elif "filename=" in cd and not filename:
+                    elif "filename=" in cd:
                         filename = cd.split("filename=")[-1].strip().strip('"\'')
                 finally:
-                    # Release the streamed connection back to the pooled session
                     try:
                         await probe_resp.aclose()
                     except Exception:
                         pass
 
-                if not filename:
-                    filename = f"{file_id}.rar"
-
-                return direct_url, filename, filesize
+                return direct_url, filename or f"{file_id}.rar", filesize
 
             except ValueError as ve:
                 if "Dead link" in str(ve):

@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,16 +8,20 @@
   <link rel="stylesheet" href="style.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link
+    href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Outfit:wght@400;500;600;700&display=swap"
+    rel="stylesheet">
 </head>
+
 <body>
   <div class="app-container">
     <!-- Header: Compact Mission-Control Top Bar -->
     <header class="app-header">
       <div class="header-left">
         <div class="brand-badge">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
           </svg>
         </div>
         <div>
@@ -24,29 +29,33 @@
             <h1>PartHarvester</h1>
             <span class="version-tag">TurboBond</span>
           </div>
-          <p class="subtitle">Multi-Part Batch Downloader & Combinational Net Aggregator</p>
+          <p class="subtitle">Multi-Part Batch Downloader &amp; Combinational Net Aggregator</p>
         </div>
       </div>
 
       <div class="header-right">
         <!-- Live Combined Speedometer -->
         <div class="live-speed-indicator" title="Total Real-Time Combinational Bandwidth">
-          <svg class="speed-svg-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+          <svg class="speed-svg-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
           </svg>
           <span class="speed-val tabular" id="metric-speed">0.0 MB/s</span>
+          <span class="speed-divider">|</span>
           <span class="speed-sub tabular" id="metric-active-count">0 active</span>
         </div>
 
-        <div class="connection-status">
+        <div class="connection-status" id="ws-badge">
           <span class="status-dot" id="ws-dot"></span>
           <span class="status-text" id="ws-status">Connecting...</span>
         </div>
 
         <button class="btn btn-secondary btn-settings" id="btn-settings-toggle" title="Settings">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="3"/>
-            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3" />
+            <path
+              d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
           </svg>
           <span>Settings</span>
         </button>
@@ -55,8 +64,9 @@
 
     <!-- Autonomous Straggler Hand-Off Alert -->
     <div id="handoff-alert-banner" class="handoff-alert-banner" style="display: none;">
-      <svg class="alert-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+      <svg class="alert-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+        stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
       </svg>
       <span id="handoff-alert-text">Autonomous Hand-off triggered</span>
     </div>
@@ -68,12 +78,15 @@
         <div class="card-header-clean">
           <div class="header-icon-label">
             <div class="icon-frame">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <path d="M2 12h20" />
+                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
               </svg>
             </div>
             <div>
-              <h2>Combinational Net & Telemetry</h2>
+              <h2>Combinational Net &amp; Telemetry</h2>
               <p class="section-desc">Multi-adapter socket bonding with adaptive EWMA throughput allocation.</p>
             </div>
           </div>
@@ -102,6 +115,11 @@
           <div class="bandwidth-bar-track" id="bandwidth-share-bar">
             <div class="bandwidth-bar-segment" style="width: 100%; background: var(--accent-cyan);"></div>
           </div>
+          <div class="share-header-row" style="margin-top: 6px; margin-bottom: 0;">
+            <span class="share-title">Smart Engine Profile</span>
+            <span id="autotune-profile-badge" class="legend-badge font-mono"
+              style="color: var(--accent-cyan-light);">Auto: Probing network...</span>
+          </div>
         </div>
 
         <!-- Active Adapters Pool -->
@@ -115,26 +133,33 @@
         <div class="card-header-clean">
           <div class="header-icon-label">
             <div class="icon-frame">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
               </svg>
             </div>
             <div>
               <h2>Add Download Links or FitGirl Paste</h2>
-              <p class="section-desc">Paste <code>paste.fitgirl-repacks.site</code> URL (auto-decrypted in 1 sec) or a list of hoster links.</p>
+              <p class="section-desc">Paste <code>paste.fitgirl-repacks.site</code> URL (auto-decrypted in 1 sec) or a
+                list of hoster links.</p>
             </div>
           </div>
         </div>
 
         <div class="input-form">
-          <textarea id="links-input" rows="3" placeholder="Paste paste.fitgirl-repacks.site URL or multi-part link list here..."></textarea>
-          
+          <textarea id="links-input" rows="3"
+            placeholder="Paste paste.fitgirl-repacks.site URL or multi-part link list here..."></textarea>
+
           <div class="input-controls-row">
             <div class="form-group flex-1">
               <label for="download-dir">Download Destination</label>
               <div class="input-with-icon">
-                <svg class="field-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/>
+                <svg class="field-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path
+                    d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
                 </svg>
                 <input type="text" id="download-dir" placeholder="D:\Downloads\PartHarvester">
               </div>
@@ -154,10 +179,11 @@
 
           <div class="action-buttons-row">
             <button class="btn btn-primary btn-ingest" id="btn-add-links">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                <polygon points="5 3 19 12 5 21 5 3"/>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="5 3 19 12 5 21 5 3" />
               </svg>
-              <span>Ingest Links & Start Multi-Part Download</span>
+              <span>Ingest Links &amp; Start Multi-Part Download</span>
             </button>
           </div>
         </div>
@@ -169,9 +195,12 @@
       <div class="card-header-clean">
         <div class="header-icon-label">
           <div class="icon-frame">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/>
-              <path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round">
+              <path
+                d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z" />
+              <path d="m3.3 7 8.7 5 8.7-5" />
+              <path d="M12 22V12" />
             </svg>
           </div>
           <div>
@@ -188,8 +217,14 @@
       <div class="queue-header-bar">
         <div class="header-icon-label">
           <div class="icon-frame">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round">
+              <line x1="8" y1="6" x2="21" y2="6" />
+              <line x1="8" y1="12" x2="21" y2="12" />
+              <line x1="8" y1="18" x2="21" y2="18" />
+              <line x1="3" y1="6" x2="3.01" y2="6" />
+              <line x1="3" y1="12" x2="3.01" y2="12" />
+              <line x1="3" y1="18" x2="3.01" y2="18" />
             </svg>
           </div>
           <div>
@@ -209,17 +244,20 @@
       <div class="queue-toolbar-bar">
         <div class="toolbar-left">
           <div class="search-filter-box">
-            <svg class="search-svg-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            <svg class="search-svg-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
             </svg>
             <input type="text" id="queue-search-input" placeholder="Filter parts by name or status...">
-            <button id="btn-search-clear" class="btn-clear-search" style="display: none;" title="Clear search">&times;</button>
+            <button id="btn-search-clear" class="btn-clear-search" style="display: none;"
+              title="Clear search">&times;</button>
           </div>
 
           <div class="sort-selector-group">
             <span class="toolbar-label">Sort:</span>
             <select id="queue-sort-select" class="font-mono">
-              <option value="natural_part">Part # (01 ➔ 99)</option>
+              <option value="natural_part">Part # (01 &#10132; 99)</option>
               <option value="status">Status Priority</option>
               <option value="progress">Progress %</option>
               <option value="size">File Size</option>
@@ -228,23 +266,26 @@
         </div>
 
         <div class="toolbar-right">
-          <!-- Global Queue Control Buttons -->
           <div class="toolbar-btn-group">
             <button class="btn btn-secondary btn-sm" id="btn-pause-all" title="Pause all downloads in queue">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <rect x="6" y="4" width="4" height="16" />
+                <rect x="14" y="4" width="4" height="16" />
               </svg>
               <span>Pause All</span>
             </button>
             <button class="btn btn-secondary btn-sm" id="btn-resume-all" title="Resume all downloads in queue">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                <polygon points="5 3 19 12 5 21 5 3"/>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="5 3 19 12 5 21 5 3" />
               </svg>
               <span>Resume All</span>
             </button>
             <button class="btn btn-secondary btn-sm" id="btn-retry-failed" title="Retry all failed download parts">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
               </svg>
               <span>Retry Failed</span>
             </button>
@@ -252,23 +293,30 @@
 
           <div class="toolbar-divider"></div>
 
-          <!-- Queue Management & Windows Explorer -->
           <div class="toolbar-btn-group">
-            <button class="btn btn-secondary btn-sm" id="btn-open-folder" title="Open Download Destination in Windows Explorer">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/>
+            <button class="btn btn-secondary btn-sm" id="btn-open-folder"
+              title="Open Download Destination in Windows Explorer">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <path
+                  d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
               </svg>
               <span>Open Folder</span>
             </button>
-            <button class="btn btn-secondary btn-sm" id="btn-clear-completed" title="Remove completed downloads from queue view">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="20 6 9 17 4 12"/>
+            <button class="btn btn-secondary btn-sm" id="btn-clear-completed"
+              title="Remove completed downloads from queue view">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="20 6 9 17 4 12" />
               </svg>
               <span>Clear Done</span>
             </button>
-            <button class="btn btn-secondary btn-sm btn-toolbar-danger" id="btn-clear-all" title="Clear all downloads from queue">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+            <button class="btn btn-secondary btn-sm btn-toolbar-danger" id="btn-clear-all"
+              title="Clear all downloads from queue">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="3 6 5 6 21 6" />
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
               </svg>
               <span>Clear All</span>
             </button>
@@ -280,36 +328,40 @@
         <table class="tasks-table">
           <thead>
             <tr>
-              <th style="width: 28%;" class="sortable-th" data-sort="filename">
+              <th class="sortable-th col-file" data-sort="filename">
                 Part / File <span class="th-sort-arrow" id="sort-arrow-filename"></span>
               </th>
-              <th style="width: 16%;">Network Adapter / Streams</th>
-              <th style="width: 14%;" class="sortable-th" data-sort="progress">
+              <th class="col-adapter">Adapter / Streams</th>
+              <th class="sortable-th col-progress" data-sort="progress">
                 Progress <span class="th-sort-arrow" id="sort-arrow-progress"></span>
               </th>
-              <th style="width: 11%;" class="sortable-th" data-sort="size">
+              <th class="sortable-th col-size" data-sort="size">
                 Size <span class="th-sort-arrow" id="sort-arrow-size"></span>
               </th>
-              <th style="width: 9%;" class="sortable-th" data-sort="speed">
+              <th class="sortable-th col-speed" data-sort="speed">
                 Speed <span class="th-sort-arrow" id="sort-arrow-speed"></span>
               </th>
-              <th style="width: 6%;">ETA</th>
-              <th style="width: 8%;" class="sortable-th" data-sort="status">
+              <th class="col-eta">ETA</th>
+              <th class="sortable-th col-status" data-sort="status">
                 Status <span class="th-sort-arrow" id="sort-arrow-status"></span>
               </th>
-              <th style="width: 8%; text-align: right;">Actions</th>
+              <th class="col-actions" style="text-align: right;">Actions</th>
             </tr>
           </thead>
           <tbody id="tasks-table-body">
-            <tr>
+            <tr id="empty-queue-row">
               <td colspan="8">
                 <div class="empty-state-frame">
-                  <svg class="empty-svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/>
-                    <path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/>
+                  <svg class="empty-svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path
+                      d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z" />
+                    <path d="m3.3 7 8.7 5 8.7-5" />
+                    <path d="M12 22V12" />
                   </svg>
                   <div class="empty-title">Queue is Empty</div>
-                  <div class="empty-subtitle">Paste a <code>paste.fitgirl-repacks.site</code> URL or download links above to begin multi-part downloading.</div>
+                  <div class="empty-subtitle">Paste a <code>paste.fitgirl-repacks.site</code> URL or download links
+                    above to begin multi-part downloading.</div>
                 </div>
               </td>
             </tr>
@@ -324,9 +376,11 @@
     <div class="modal-window modal-window-wide">
       <div class="modal-top">
         <div class="modal-title-row">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="3"/>
-            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3" />
+            <path
+              d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
           </svg>
           <h3>PartHarvester Engine Settings</h3>
         </div>
@@ -338,12 +392,24 @@
         <fieldset class="settings-fieldset">
           <legend>
             <span class="legend-content">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
               </svg>
-              <span>Acceleration & Concurrency</span>
+              <span>Acceleration &amp; Concurrency</span>
             </span>
           </legend>
+          <div class="form-group">
+            <label class="toggle-control-label">
+              <span class="toggle-switch">
+                <input type="checkbox" id="setting-auto-tune" checked>
+                <span class="toggle-slider"></span>
+              </span>
+              <span class="toggle-text">Smart Auto-Tune (Recommended)</span>
+            </label>
+            <small class="helper-text">Automatically tunes concurrent files, segments per file, and per-IP socket caps
+              from live adapter speeds and host reset feedback.</small>
+          </div>
           <div class="form-row">
             <div class="form-group flex-1">
               <label for="setting-concurrency">Max Simultaneous Parts</label>
@@ -397,10 +463,13 @@
         <fieldset class="settings-fieldset">
           <legend>
             <span class="legend-content">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <path d="M2 12h20" />
+                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
               </svg>
-              <span>Combinational Net & Bonding</span>
+              <span>Combinational Net &amp; Bonding</span>
             </span>
           </legend>
           <div class="form-group">
@@ -410,7 +479,8 @@
               <option value="equal">Equal Round-Robin Segment Distribution</option>
               <option value="primary">Primary Adapter with Secondary Fallback</option>
             </select>
-            <small class="helper-text">Determines how parallel chunk streams are split across active network adapters.</small>
+            <small class="helper-text">Determines how parallel chunk streams are split across active network
+              adapters.</small>
           </div>
           <div class="form-group">
             <label class="toggle-control-label">
@@ -420,7 +490,8 @@
               </span>
               <span class="toggle-text">Autonomous Straggler Work-Stealing / Hand-Off</span>
             </label>
-            <small class="helper-text">Allows high-speed idle adapters to dynamically steal remaining uncompleted tails from lagging streams.</small>
+            <small class="helper-text">Allows high-speed idle adapters to dynamically steal remaining uncompleted tails
+              from lagging streams.</small>
           </div>
         </fieldset>
 
@@ -428,11 +499,14 @@
         <fieldset class="settings-fieldset">
           <legend>
             <span class="legend-content">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/>
-                <path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <path
+                  d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z" />
+                <path d="m3.3 7 8.7 5 8.7-5" />
+                <path d="M12 22V12" />
               </svg>
-              <span>Extraction & Cleanup</span>
+              <span>Extraction &amp; Cleanup</span>
             </span>
           </legend>
           <div class="form-group">
@@ -449,7 +523,8 @@
                 </span>
                 <span class="toggle-text">Auto-Extract Archives (7-Zip)</span>
               </label>
-              <small class="helper-text">Decompresses multi-part archive sets immediately when last part finishes.</small>
+              <small class="helper-text">Decompresses multi-part archive sets immediately when last part
+                finishes.</small>
             </div>
             <div class="form-group flex-1">
               <label class="toggle-control-label">
@@ -459,7 +534,32 @@
                 </span>
                 <span class="toggle-text">Delete Archives After Extraction</span>
               </label>
-              <small class="helper-text">Automatically removes .rar/.part files after successful unpacking to reclaim disk space.</small>
+              <small class="helper-text">Automatically removes .rar/.part files after successful unpacking to reclaim
+                disk space.</small>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group flex-1">
+              <label class="toggle-control-label">
+                <span class="toggle-switch">
+                  <input type="checkbox" id="setting-auto-resume" checked>
+                  <span class="toggle-slider"></span>
+                </span>
+                <span class="toggle-text">Auto-Resume Downloads on Startup</span>
+              </label>
+              <small class="helper-text">Re-queues downloads that were interrupted by a restart. When off, they
+                come back paused. Applies on next launch.</small>
+            </div>
+            <div class="form-group flex-1">
+              <label class="toggle-control-label">
+                <span class="toggle-switch">
+                  <input type="checkbox" id="setting-auto-retry" checked>
+                  <span class="toggle-slider"></span>
+                </span>
+                <span class="toggle-text">Auto-Retry Failed Parts</span>
+              </label>
+              <small class="helper-text">Re-queues failed parts up to 3 times (30s, 60s, 120s backoff). Dead links
+                are never retried.</small>
             </div>
           </div>
         </fieldset>
@@ -468,16 +568,20 @@
         <fieldset class="settings-fieldset">
           <legend>
             <span class="legend-content">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M21 2l-2 2m-1.5 1.5L16 7m-1.5 1.5L13 10m-1.5 1.5L10 13"/><circle cx="7.5" cy="16.5" r="4.5"/>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 2l-2 2m-1.5 1.5L16 7m-1.5 1.5L13 10m-1.5 1.5L10 13" />
+                <circle cx="7.5" cy="16.5" r="4.5" />
               </svg>
-              <span>Accounts & Hoster Bypass</span>
+              <span>Accounts &amp; Hoster Bypass</span>
             </span>
           </legend>
           <div class="form-group">
             <label for="setting-rd-token">Real-Debrid API Token (Optional)</label>
-            <input type="password" id="setting-rd-token" placeholder="Paste your Real-Debrid API key here for 1fichier / Rapidgator bypass">
-            <small class="helper-text">Enables uncapped gigabit CDN speeds without host countdown timers or captchas.</small>
+            <input type="password" id="setting-rd-token"
+              placeholder="Paste your Real-Debrid API key here for 1fichier / Rapidgator bypass">
+            <small class="helper-text">Enables uncapped gigabit CDN speeds without host countdown timers or
+              captchas.</small>
           </div>
         </fieldset>
       </div>
@@ -494,4 +598,5 @@
 
   <script src="app.js"></script>
 </body>
+
 </html>

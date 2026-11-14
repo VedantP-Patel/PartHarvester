@@ -3,6 +3,7 @@ import asyncio
 import os
 import re
 import shutil
+import subprocess
 from typing import Any, Dict, List, Optional, Tuple
 from engine.task import DownloadTask, TaskStatus
 
@@ -54,8 +55,10 @@ class ArchiveExtractor:
             match = self.match_part_sequence(task.filename)
             if match:
                 prefix, idx, ext = match
-                if prefix not in groups:
-                    groups[prefix] = {
+                norm_dir = os.path.normpath(task.destination_dir)
+                group_key = f"{norm_dir}::{prefix}"
+                if group_key not in groups:
+                    groups[group_key] = {
                         "prefix": prefix,
                         "extension": ext,
                         "destination_dir": task.destination_dir,
@@ -64,9 +67,9 @@ class ArchiveExtractor:
                         "total_parts": 0,
                         "first_part": None,
                     }
-                groups[prefix]["parts"][idx] = task
+                groups[group_key]["parts"][idx] = task
 
-        for prefix, data in groups.items():
+        for group_key, data in groups.items():
             parts = data["parts"]
             if not parts:
                 continue
@@ -76,7 +79,6 @@ class ArchiveExtractor:
             expected_count = max_idx - min_idx + 1
             data["total_parts"] = expected_count
 
-            # Supports both 0-indexed (.r00..rNN) and 1-indexed (.part01..partNN) contiguous sequences
             all_present = min_idx in (0, 1) and len(indices) == expected_count
             all_completed = all_present and all(
                 parts[i].status == TaskStatus.COMPLETED for i in indices
@@ -112,6 +114,7 @@ class ArchiveExtractor:
             self.seven_zip_path,
             "x",
             "-y",
+            "-p-",
             "-mmt=on",
             f"-o{output_dir}",
             archive_path,
@@ -121,6 +124,7 @@ class ArchiveExtractor:
             proc = await asyncio.to_thread(
                 subprocess.run,
                 cmd,
+                stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 check=False,

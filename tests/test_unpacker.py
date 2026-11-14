@@ -1,5 +1,6 @@
 """Unit Tests for Archive Sequence Detector and Unpacker."""
 import pytest
+import os
 from engine.task import DownloadTask, TaskStatus
 from extractor.unpacker import ArchiveExtractor
 
@@ -51,16 +52,18 @@ def test_group_tasks_completeness():
         ),
     ]
 
+    key = f"{os.path.normpath('./test')}::game"
     groups = extractor.group_tasks_by_sequence(tasks)
-    assert "game" in groups
-    assert groups["game"]["is_complete"] is False
+    assert key in groups
+    assert groups[key]["prefix"] == "game"
+    assert groups[key]["is_complete"] is False
 
     tasks[1].status = TaskStatus.COMPLETED
     tasks[2].status = TaskStatus.COMPLETED
 
     groups_after = extractor.group_tasks_by_sequence(tasks)
-    assert groups_after["game"]["is_complete"] is True
-    assert groups_after["game"]["first_part"] == "game_part01.rar"
+    assert groups_after[key]["is_complete"] is True
+    assert groups_after[key]["first_part"] == "game_part01.rar"
 
 
 def test_group_tasks_zero_indexed_r00_sequence():
@@ -76,7 +79,8 @@ def test_group_tasks_zero_indexed_r00_sequence():
         for i in range(3)  # .r00, .r01, .r02 -> indices 0, 1, 2
     ]
     groups = extractor.group_tasks_by_sequence(tasks)
-    assert "archive" in groups
-    assert groups["archive"]["total_parts"] == 3
-    assert groups["archive"]["is_complete"] is True
-    assert groups["archive"]["first_part"] == "archive.r00"
+    key = f"{os.path.normpath('./test')}::archive"
+    assert key in groups
+    assert groups[key]["total_parts"] == 3
+    assert groups[key]["is_complete"] is True
+    assert groups[key]["first_part"] == "archive.r00"

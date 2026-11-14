@@ -146,11 +146,13 @@ def test_ewma_weighted_segment_allocation():
     # Mock adapters with different EWMA speeds
     a1 = NetworkAdapter(
         name="Wi-Fi", ip_address="192.168.1.100", friendly_type="Wi-Fi",
-        is_up=True, is_enabled=True, ewma_speed_bytes=80 * 1024 * 1024  # 80 MB/s
+        is_up=True, is_enabled=True, ewma_speed_bytes=80 * 1024 * 1024,  # 80 MB/s
+        max_concurrency_cap=16,
     )
     a2 = NetworkAdapter(
         name="Tether", ip_address="192.168.42.2", friendly_type="USB Tethering",
-        is_up=True, is_enabled=True, ewma_speed_bytes=20 * 1024 * 1024  # 20 MB/s
+        is_up=True, is_enabled=True, ewma_speed_bytes=20 * 1024 * 1024,  # 20 MB/s
+        max_concurrency_cap=16,
     )
     net_mgr.get_available_adapters = lambda: [a1, a2]
 
@@ -161,6 +163,7 @@ def test_ewma_weighted_segment_allocation():
     a2_count = sum(1 for a in allocations if a and a.ip_address == "192.168.42.2")
     # 80/20 ratio -> a1 should get more segments than a2
     assert a1_count > a2_count
+    assert (a1_count, a2_count) == (8, 2)
     assert a1_count + a2_count == 10
 
     # Equal round-robin strategy
@@ -190,29 +193,38 @@ def test_event_driven_queue_dispatch():
 
 @pytest.mark.anyio
 async def test_session_pooling():
-    """Verifies AsyncDownloader maintains and reuses persistent sessions per interface."""
+    """Verifies sessions are pooled in a bounded set of shards per adapter and reused round-robin."""
     link_mgr = LinkManager()
     net_mgr = NetworkManager()
     session_mgr = MagicMock()
     downloader = AsyncDownloader(link_mgr, net_mgr, session_mgr)
 
-    s1 = await downloader._get_session(None)
-    s2 = await downloader._get_session(None)
-    assert s1 is s2, "Session pool should return the exact same instance for the same adapter IP"
+    n = downloader._SHARDS_PER_ADAPTER
+    first_cycle = [await downloader._get_session(None) for _ in range(n)]
+    second_cycle = [await downloader._get_session(None) for _ in range(n)]
 
-    downloader._evict_session(None)
-    assert None not in downloader._session_pool
+    assert len({id(s) for s in first_cycle}) == n, "Each shard should hold its own session"
+    assert [id(s) for s in first_cycle] == [id(s) for s in second_cycle], \
+        "Sessions must be reused round-robin, not recreated"
+
+    other = await downloader._get_session("192.168.1.10")
+    assert all(other is not s for s in first_cycle), "Different adapters must not share sessions"
+
     await downloader.stop()
+    assert not downloader._session_shards
 
 
 @pytest.mark.anyio
 async def test_domain_pacing_semaphore():
     """Verifies LinkManager maintains a per-domain concurrency limiter to prevent 403 blocks."""
     link_mgr = LinkManager()
-    sem1 = await link_mgr._get_domain_semaphore("fuckingfast.co")
-    sem2 = await link_mgr._get_domain_semaphore("fuckingfast.co")
-    assert sem1 is sem2, "Same domain should share the exact same semaphore"
-    assert sem1._value == 2, "Default domain semaphore limit should be 2"
+    sem1 = await link_mgr._get_domain_semaphore("fuckingfast.co", None)
+    sem2 = await link_mgr._get_domain_semaphore("fuckingfast.co", None)
+    assert sem1 is sem2, "Same domain and interface should share the exact same semaphore"
+    assert sem1._value == 3, "Default domain semaphore limit should be 3"
+
+    sem_other = await link_mgr._get_domain_semaphore("fuckingfast.co", "192.168.1.10")
+    assert sem_other is not sem1, "Each interface gets its own per-domain limiter"
 
 
 @pytest.mark.anyio
@@ -285,5 +297,3 @@ async def test_O1_sliding_window_speed_tracker():
     assert net_mgr._adapter_rolling_bytes[ip] == 100 * 65536
     speed = net_mgr.get_adapter_speed(ip)
     assert speed > 0
-
-

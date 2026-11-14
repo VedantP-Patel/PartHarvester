@@ -8,6 +8,7 @@ decryption with zlib/rawdeflate decompression.
 """
 
 import base64
+import html
 import json
 import re
 import urllib.parse
@@ -20,16 +21,22 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 
+def is_privatebin_url(url: str) -> bool:
+    """Returns True if URL looks like a PrivateBin paste link (?<id>#<base58key>)."""
+    try:
+        parsed = urllib.parse.urlparse(url.strip())
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            return False
+        paste_id = parsed.query.strip()
+        key = parsed.fragment.strip()
+        return bool(paste_id and key and len(key) >= 20 and "&" not in paste_id)
+    except Exception:
+        return False
+
+
 def parse_privatebin_url(url: str) -> Tuple[str, str, str]:
-    """Parses a PrivateBin URL into base domain, paste ID, and decryption key.
-
-    Example URL:
-    https://paste.fitgirl-repacks.site/?99e460e2438a1459#36CYUqDBywuhLVUuoebSyT6RaWpC7bUkF2qDHTuKrpFV
-
-    Returns:
-        (base_url, paste_id, key)
-    """
-    parsed = urllib.parse.urlparse(url)
+    """Parses a PrivateBin URL into base domain, paste ID, and decryption key."""
+    parsed = urllib.parse.urlparse(url.strip())
     base_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
     paste_id = parsed.query.strip()
     key = parsed.fragment.strip()
@@ -43,15 +50,10 @@ def parse_privatebin_url(url: str) -> Tuple[str, str, str]:
 
 
 def decrypt_privatebin_payload(paste_data: dict, key_base58: str) -> str:
-    """Decrypts a PrivateBin v2 JSON payload using the given Base58 key.
+    """Decrypts a PrivateBin v2 JSON payload using the given Base58 key."""
+    if paste_data.get("status") not in (None, 0):
+        raise ValueError(f"PrivateBin server error: {paste_data.get('message', 'Unknown error')}")
 
-    Args:
-        paste_data: Dictionary returned by the PrivateBin server JSON endpoint.
-        key_base58: The symmetric key string from the URL fragment (#key).
-
-    Returns:
-        Plaintext decrypted content string.
-    """
     adata = paste_data.get("adata")
     ct_b64 = paste_data.get("ct")
 
@@ -116,12 +118,16 @@ def decrypt_privatebin_payload(paste_data: dict, key_base58: str) -> str:
 
 
 def extract_links_from_text(text: str) -> List[str]:
-    """Finds all URLs inside decrypted or raw text, stripping markup and trailing punctuation."""
-    pattern = r"https?://[^\s'\"<>\)]+"
-    candidates = re.findall(pattern, text)
-    cleaned = []
+    """Finds all URLs inside decrypted or raw text, normalizing escapes and markdown."""
+    normalized = html.unescape(text).replace(r"\/", "/")
+    pattern = r"https?://[^\s'\"<>]+"
+    candidates = re.findall(pattern, normalized)
+    cleaned: List[str] = []
     for link in candidates:
-        link = link.rstrip(".,;)>]")
+        link = link.rstrip(".,;>*_`~]")
+        # Strip unmatched trailing ')' from Markdown [text](url) while preserving balanced parens in URLs
+        while link.endswith(")") and link.count(")") > link.count("("):
+            link = link[:-1]
         if link and link not in cleaned:
             cleaned.append(link)
     return cleaned

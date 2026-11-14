@@ -15,26 +15,31 @@ let currentSortDirection = 'asc';
 function naturalCompare(a, b) {
   return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
 }
+
 function formatBytes(bytes, decimals = 2) {
   if (!bytes || bytes <= 0) return '0 B';
   const k = 1024;
   const dm = decimals < 0 ? 0 : decimals;
   const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  const i = Math.min(sizes.length - 1, Math.floor(Math.log(bytes) / Math.log(k)));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
 }
 
 function formatSpeed(bytesPerSec) {
-  if (!bytesPerSec || bytesPerSec <= 0) return '0.0 MB/s';
+  if (!bytesPerSec || bytesPerSec <= 0) return '0.00 MB/s';
+  if (bytesPerSec < 1024 * 1024) {
+    return Math.round(bytesPerSec / 1024) + ' KB/s';
+  }
   const mbps = bytesPerSec / (1024 * 1024);
-  return mbps.toFixed(1) + ' MB/s';
+  return mbps.toFixed(2) + ' MB/s';
 }
 
 function formatEta(seconds) {
-  if (!seconds || seconds <= 0) return '--';
-  if (seconds < 60) return `${seconds}s`;
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
+  if (!seconds || seconds <= 0 || !Number.isFinite(seconds)) return '--';
+  const totalSec = Math.round(seconds);
+  if (totalSec < 60) return `${totalSec}s`;
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
   if (m < 60) return `${m}m ${s}s`;
   const h = Math.floor(m / 60);
   return `${h}h ${m % 60}m`;
@@ -48,8 +53,13 @@ function connectWebSocket() {
   socket = new WebSocket(wsUrl);
 
   socket.onopen = () => {
-    document.getElementById('ws-dot').style.background = '#10b981';
-    document.getElementById('ws-status').innerText = 'Connected';
+    const dot = document.getElementById('ws-dot');
+    if (dot) {
+      dot.className = 'status-dot connected';
+      dot.style.background = '#10b981';
+    }
+    const statusEl = document.getElementById('ws-status');
+    if (statusEl) statusEl.innerText = 'Connected';
     if (reconnectTimer) {
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
@@ -66,8 +76,13 @@ function connectWebSocket() {
   };
 
   socket.onclose = () => {
-    document.getElementById('ws-dot').style.background = '#f43f5e';
-    document.getElementById('ws-status').innerText = 'Disconnected';
+    const dot = document.getElementById('ws-dot');
+    if (dot) {
+      dot.className = 'status-dot disconnected';
+      dot.style.background = '#f43f5e';
+    }
+    const statusEl = document.getElementById('ws-status');
+    if (statusEl) statusEl.innerText = 'Disconnected';
     if (!reconnectTimer) {
       reconnectTimer = setTimeout(connectWebSocket, 2000);
     }
@@ -81,32 +96,93 @@ function connectWebSocket() {
 
 // Render Telemetry
 function renderTelemetry(data) {
-  const { metrics, adapters, tasks, extraction_jobs, handoff_events } = data;
-  currentAdapters = adapters || [];
-  currentTasks = tasks || [];
+  const { metrics = {}, adapters = [], tasks = [], extraction_jobs = {}, handoff_events = [] } = data;
+  currentAdapters = adapters;
+  currentTasks = tasks;
+
+  // Accurate active/queued/completed/failed counts from task list
+  let activeFiles = 0;
+  let queuedFiles = 0;
+  let completedFiles = 0;
+  let failedFiles = 0;
+  let taskSpeedSum = 0;
+  let totalDlBytes = 0;
+  let knownSizeBytes = 0;
+  let knownCount = 0;
+
+  for (const t of tasks) {
+    const sz = Math.max(0, t.file_size || 0);
+    const dl = sz > 0 ? Math.min(sz, Math.max(0, t.downloaded_bytes || 0)) : Math.max(0, t.downloaded_bytes || 0);
+    totalDlBytes += dl;
+
+    if (sz > 0) {
+      knownSizeBytes += sz;
+      knownCount += 1;
+    }
+
+    if (t.status === 'DOWNLOADING' || t.status === 'RESOLVING') {
+      activeFiles += 1;
+      if (t.status === 'DOWNLOADING') {
+        taskSpeedSum += Math.max(0, t.speed_bytes_sec || 0);
+      }
+    } else if (t.status === 'QUEUED') {
+      queuedFiles += 1;
+    } else if (t.status === 'COMPLETED') {
+      completedFiles += 1;
+    } else if (t.status === 'FAILED') {
+      failedFiles += 1;
+    }
+  }
+
+  const totalStreams = currentAdapters.reduce((sum, a) => sum + (a.active_connections || 0), 0);
+  const rawEngineSpeed = Math.max(0, metrics.total_speed_bytes_sec || 0);
+  const effectiveSpeed = activeFiles > 0 ? Math.max(rawEngineSpeed, taskSpeedSum) : 0;
 
   // 1. Top Metrics
-  document.getElementById('metric-speed').innerText = formatSpeed(metrics.total_speed_bytes_sec);
-  document.getElementById('metric-active-count').innerText = `${metrics.active_downloads} active connections`;
+  document.getElementById('metric-speed').innerText = formatSpeed(effectiveSpeed);
+  document.getElementById('metric-active-count').innerText = totalStreams > 0
+    ? `${activeFiles} active · ${totalStreams} streams`
+    : `${activeFiles} active`;
 
-  const totalDl = formatBytes(metrics.total_downloaded_bytes);
-  const totalSz = formatBytes(metrics.total_size_bytes);
-  document.getElementById('metric-downloaded').innerText = `${totalDl} / ${totalSz}`;
+  // Estimate total repack size accurately even when queued parts have not resolved file_size yet
+  const unknownCount = Math.max(0, tasks.length - knownCount);
+  const avgKnownSize = knownCount > 0 ? (knownSizeBytes / knownCount) : 0;
+  const estimatedTotalBytes = knownSizeBytes + (unknownCount * avgKnownSize);
+  const hasEstimate = unknownCount > 0 && knownCount > 0;
 
-  const pct = metrics.total_size_bytes > 0
-    ? Math.min(100, (metrics.total_downloaded_bytes / metrics.total_size_bytes) * 100)
+  const totalDlStr = formatBytes(totalDlBytes);
+  const totalSzStr = `${hasEstimate ? '~' : ''}${formatBytes(estimatedTotalBytes)}`;
+  document.getElementById('metric-downloaded').innerText = `${totalDlStr} / ${totalSzStr}`;
+
+  const pct = estimatedTotalBytes > 0
+    ? Math.min(100, (totalDlBytes / estimatedTotalBytes) * 100)
     : 0;
   document.getElementById('metric-progress-fill').style.width = `${pct.toFixed(1)}%`;
   const pctEl = document.getElementById('metric-progress-pct');
-  if (pctEl) pctEl.innerText = `${pct.toFixed(1)}% Complete`;
+  if (pctEl) pctEl.innerText = `${pct.toFixed(1)}%${hasEstimate ? ' EST.' : ''}`;
 
-  document.getElementById('chip-downloading').innerText = `${metrics.active_downloads} Active`;
-  document.getElementById('chip-queued').innerText = `${metrics.queued_downloads} Queued`;
-  document.getElementById('chip-completed').innerText = `${metrics.completed_downloads} Done`;
-  document.getElementById('chip-failed').innerText = `${metrics.failed_downloads} Failed`;
+  document.getElementById('chip-downloading').innerHTML = `<span class="chip-dot"></span>${activeFiles} Active`;
+  document.getElementById('chip-queued').innerHTML = `<span class="chip-dot"></span>${queuedFiles} Queued`;
+  document.getElementById('chip-completed').innerHTML = `<span class="chip-dot"></span>${completedFiles} Done`;
+  document.getElementById('chip-failed').innerHTML = `<span class="chip-dot"></span>${failedFiles} Failed`;
 
   const queueTotalEl = document.getElementById('total-tasks-count');
   if (queueTotalEl) queueTotalEl.innerText = tasks.length;
+
+  const profileEl = document.getElementById('autotune-profile-badge');
+  if (profileEl) {
+    if (metrics.auto_tune_profile) {
+      profileEl.innerText = metrics.auto_tune_profile;
+    } else {
+      const activeNets = currentAdapters.filter(a => a.is_enabled && a.is_up);
+      const netCount = activeNets.length || 1;
+      const totalBwMb = activeNets.reduce((s, a) => s + Math.max(a.ewma_speed_bytes || 0, a.current_speed_bytes || 0), 0) / (1024 * 1024);
+      const recFiles = netCount === 1 ? 2 : Math.min(6, netCount * 2);
+      const recSegs = netCount === 1 ? 2 : 3;
+      const speedTag = totalBwMb > 0.1 ? `${totalBwMb.toFixed(1)} MB/s` : 'probing';
+      profileEl.innerText = `Auto: ${recFiles} files × ${recSegs} segs (${netCount} net${netCount > 1 ? 's' : ''}, ${speedTag})`;
+    }
+  }
 
   // 2. Hand-off alerts & Bandwidth Share Bar
   renderHandoffAlert(handoff_events);
@@ -132,19 +208,19 @@ function renderHandoffAlert(events) {
 
   const latest = events[events.length - 1];
   const now = Date.now() / 1000;
-  // Show if happened within last 14 seconds
   if (now - latest.timestamp <= 14) {
     banner.style.display = 'flex';
-    text.innerHTML = `<strong>TurboBond Hand-Off:</strong> Autonomous takeover of <em>${latest.filename || 'part'}</em> from <code>${latest.from_adapter}</code> ➔ <code>${latest.to_adapter}</code>`;
+    text.innerHTML = `<strong>TurboBond Hand-Off:</strong> Autonomous takeover of <em>${escapeHtml(latest.filename || 'part')}</em> from <code>${escapeHtml(latest.from_adapter)}</code> ➔ <code>${escapeHtml(latest.to_adapter)}</code>`;
   } else {
     banner.style.display = 'none';
   }
 }
 
 function getAdapterIconSvg(friendlyType) {
-  if (friendlyType.includes('Wi-Fi')) {
+  const label = String(friendlyType || '');
+  if (label.includes('Wi-Fi')) {
     return `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg>`;
-  } else if (friendlyType.includes('USB') || friendlyType.includes('Tether')) {
+  } else if (label.includes('USB') || label.includes('Tether')) {
     return `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>`;
   } else {
     return `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>`;
@@ -168,18 +244,25 @@ function renderBandwidthBar(adapters) {
 
   let segmentsHtml = '';
   let labelParts = [];
+  let allocatedPctSum = 0;
 
   active.forEach((a, idx) => {
     const color = colors[idx % colors.length];
-    const pct = hasShare ? (a.bandwidth_share_pct || 0) : Math.round(100 / active.length);
+    let pct;
+    if (idx === active.length - 1) {
+      pct = Math.max(0, 100 - allocatedPctSum);
+    } else {
+      pct = hasShare ? Math.round(a.bandwidth_share_pct || 0) : Math.round(100 / active.length);
+      allocatedPctSum += pct;
+    }
     const slots = a.allocated_slots || 1;
     segmentsHtml += `
-      <div class="bandwidth-bar-segment" style="width: ${pct}%; background: ${color};" title="${a.friendly_type} (${a.ip_address}): ${pct}% share (${slots} slots)"></div>
+      <div class="bandwidth-bar-segment" style="width: ${pct}%; background: ${color};" title="${escapeHtml(a.friendly_type)} (${escapeHtml(a.ip_address)}): ${pct}% share (${slots} slots)"></div>
     `;
     labelParts.push(`
       <span class="legend-badge">
         <span class="legend-dot" style="background: ${color};"></span>
-        <span class="legend-name">${a.friendly_type}</span>
+        <span class="legend-name">${escapeHtml(a.friendly_type)}</span>
         <span class="legend-pct tabular" style="color: ${color};">${pct}%</span>
         <span class="legend-slots">(${slots}s)</span>
       </span>
@@ -202,6 +285,8 @@ function escapeHtml(str) {
 
 function renderAdapters(adapters) {
   const container = document.getElementById('adapters-list');
+  if (!container) return;
+
   if (!adapters || adapters.length === 0) {
     container.innerHTML = '<div class="loading-state">No active network adapters detected.</div>';
     return;
@@ -219,10 +304,15 @@ function renderAdapters(adapters) {
   adapters.forEach((a, index) => {
     seen.add(a.ip_address);
     const ip = escapeHtml(a.ip_address);
+    const showTypeTag = a.friendly_type && a.friendly_type.toLowerCase() !== String(a.name || '').toLowerCase();
+    const curSpeed = a.current_speed_bytes || 0;
+    const ewmaSpeed = a.ewma_speed_bytes || 0;
+    const showEwma = ewmaSpeed > 0 && Math.abs(ewmaSpeed - curSpeed) > 30 * 1024;
+
     const html = `
       <div class="adapter-left">
         <label class="toggle-control-mini" title="${a.is_enabled ? 'Disable adapter' : 'Enable adapter'}">
-          <input type="checkbox" ${a.is_enabled ? 'checked' : ''} onchange="toggleAdapter('${ip}', this.checked)">
+          <input type="checkbox" data-ip="${ip}" ${a.is_enabled ? 'checked' : ''} onchange="toggleAdapter(this.dataset.ip, this.checked)">
           <span class="toggle-slider-mini"></span>
         </label>
         <div class="adapter-icon-frame">
@@ -231,19 +321,19 @@ function renderAdapters(adapters) {
         <div class="adapter-meta">
           <div class="adapter-name">
             <span>${escapeHtml(a.name)}</span>
-            <span class="adapter-type-tag">${escapeHtml(a.friendly_type)}</span>
+            ${showTypeTag ? `<span class="adapter-type-tag">${escapeHtml(a.friendly_type)}</span>` : ''}
           </div>
-          <div class="adapter-ip font-mono tabular">${ip}</div>
+          <div class="adapter-ip font-mono">${ip}</div>
         </div>
       </div>
       <div class="adapter-right">
-        <div class="adapter-speed-stat">
-          <div class="adapter-speed-val font-mono tabular">${formatSpeed(a.current_speed_bytes)}</div>
-          <div class="adapter-speed-ewma font-mono tabular">EWMA: ${formatSpeed(a.ewma_speed_bytes)}</div>
+        <div class="adapter-speed-stat tabular font-mono">
+          <div class="adapter-speed-val">${formatSpeed(curSpeed)}</div>
+          ${showEwma ? `<div class="adapter-speed-ewma">Avg: ${formatSpeed(ewmaSpeed)}</div>` : ''}
         </div>
-        <div class="adapter-caps-row">
-          <span class="quota-badge font-mono tabular">${a.allocated_slots || 1} Slots</span>
-          <span class="conns-badge font-mono tabular">${a.active_connections || 0}/${a.max_concurrency_cap || 3} Streams</span>
+        <div class="adapter-caps-row font-mono">
+          <span class="quota-badge" title="Target stream slots">${a.allocated_slots} Slots</span>
+          <span class="conns-badge" title="Active TCP streams">${(a.max_connections || a.max_concurrency_cap) ? `${a.active_connections}/${a.max_connections || a.max_concurrency_cap}` : a.active_connections} Active</span>
         </div>
       </div>`;
     const className = `adapter-item ${a.is_enabled ? 'adapter-enabled' : 'adapter-disabled'}`;
@@ -254,8 +344,6 @@ function renderAdapters(adapters) {
       el = document.createElement('div');
       el.setAttribute('data-adapter-ip', a.ip_address);
     }
-    // Compare against our own cached string: innerHTML round-trips are normalized by the
-    // browser and would never match the template literal.
     if (el._sig !== sig) {
       el.className = className;
       el.innerHTML = html;
@@ -279,42 +367,52 @@ function getFilteredAndSortedTasks(tasks) {
   }
 
   const selectVal = document.getElementById('queue-sort-select')?.value || 'natural_part';
-  if (currentSortColumn === 'filename' || selectVal === 'natural_part') {
+  if (currentSortColumn === 'filename' || (!currentSortColumn && selectVal === 'natural_part')) {
     list.sort((a, b) => {
       const res = naturalCompare(a.filename || a.original_url || '', b.filename || b.original_url || '');
       return currentSortDirection === 'desc' ? -res : res;
     });
-  } else if (currentSortColumn === 'status' || selectVal === 'status') {
+  } else if (currentSortColumn === 'status' || (!currentSortColumn && selectVal === 'status')) {
     const weights = { DOWNLOADING: 0, RESOLVING: 1, QUEUED: 2, PAUSED: 3, FAILED: 4, COMPLETED: 5 };
     list.sort((a, b) => {
       const res = (weights[a.status] ?? 6) - (weights[b.status] ?? 6);
       return currentSortDirection === 'desc' ? -res : res;
     });
-  } else if (currentSortColumn === 'progress' || selectVal === 'progress') {
+  } else if (currentSortColumn === 'progress' || (!currentSortColumn && selectVal === 'progress')) {
     list.sort((a, b) => {
-      const aPct = a.file_size > 0 ? (a.downloaded_bytes / a.file_size) : 0;
-      const bPct = b.file_size > 0 ? (b.downloaded_bytes / b.file_size) : 0;
+      const aPct = a.file_size > 0 ? (a.downloaded_bytes / a.file_size) : (a.status === 'COMPLETED' ? 1 : 0);
+      const bPct = b.file_size > 0 ? (b.downloaded_bytes / b.file_size) : (b.status === 'COMPLETED' ? 1 : 0);
       return currentSortDirection === 'asc' ? aPct - bPct : bPct - aPct;
     });
-  } else if (currentSortColumn === 'size' || selectVal === 'size') {
-    list.sort((a, b) => currentSortDirection === 'asc' ? a.file_size - b.file_size : b.file_size - a.file_size);
+  } else if (currentSortColumn === 'size' || (!currentSortColumn && selectVal === 'size')) {
+    list.sort((a, b) => currentSortDirection === 'asc' ? (a.file_size || 0) - (b.file_size || 0) : (b.file_size || 0) - (a.file_size || 0));
   } else if (currentSortColumn === 'speed') {
-    list.sort((a, b) => currentSortDirection === 'asc' ? a.speed_bytes_sec - b.speed_bytes_sec : b.speed_bytes_sec - a.speed_bytes_sec);
+    list.sort((a, b) => currentSortDirection === 'asc' ? (a.speed_bytes_sec || 0) - (b.speed_bytes_sec || 0) : (b.speed_bytes_sec || 0) - (a.speed_bytes_sec || 0));
   }
 
   return list;
 }
 
+function computeTaskEta(t) {
+  if (t.status !== 'DOWNLOADING') return '--';
+  if (t.eta_seconds && t.eta_seconds > 0) return formatEta(t.eta_seconds);
+  if (t.file_size > 0 && t.speed_bytes_sec > 0 && t.file_size > t.downloaded_bytes) {
+    return formatEta((t.file_size - t.downloaded_bytes) / t.speed_bytes_sec);
+  }
+  return '--';
+}
+
 function renderTasks(tasks, adapters) {
   const tbody = document.getElementById('tasks-table-body');
+  if (!tbody) return;
   const displayTasks = getFilteredAndSortedTasks(tasks);
 
   if (!displayTasks || displayTasks.length === 0) {
     const emptyKey = searchQuery ? 'search' : 'queue';
-    if (tbody.dataset.empty !== emptyKey) {
+    if (tbody.dataset.empty !== emptyKey || !tbody.querySelector('tr:not([data-task-id])')) {
       tbody.dataset.empty = emptyKey;
       tbody.innerHTML = `
-      <tr>
+      <tr id="empty-queue-row">
         <td colspan="8">
           <div class="empty-state-frame">
             <svg class="empty-svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -330,11 +428,9 @@ function renderTasks(tasks, adapters) {
     return;
   }
 
-  // Leaving the empty state: clear the placeholder row once
-  if (tbody.dataset.empty) {
-    delete tbody.dataset.empty;
-    tbody.innerHTML = '';
-  }
+  // Always remove any empty-state placeholder rows before rendering active rows
+  delete tbody.dataset.empty;
+  tbody.querySelectorAll(':scope > tr:not([data-task-id])').forEach(el => el.remove());
 
   const activeAdapters = (adapters || []).filter(a => a.is_enabled && a.is_up);
 
@@ -343,31 +439,60 @@ function renderTasks(tasks, adapters) {
     existingRows.set(row.getAttribute('data-task-id'), row);
   });
 
-  // Remove stale rows first so DOM indices below line up with displayTasks
   const wanted = new Set(displayTasks.map(t => String(t.id)));
   existingRows.forEach((row, id) => {
-    if (!wanted.has(id)) { row.remove(); existingRows.delete(id); }
+    if (!wanted.has(id)) {
+      row.remove();
+      existingRows.delete(id);
+    }
   });
 
   displayTasks.forEach((t, index) => {
-    const pct = t.file_size > 0
-      ? ((t.downloaded_bytes / t.file_size) * 100).toFixed(1)
-      : (t.status === 'COMPLETED' ? '100.0' : '0.0');
+    const safeDownloaded = t.file_size > 0
+      ? Math.min(t.file_size, Math.max(0, t.downloaded_bytes || 0))
+      : Math.max(0, t.downloaded_bytes || 0);
+    const rawPct = t.file_size > 0
+      ? Math.min(100, (safeDownloaded / t.file_size) * 100)
+      : (t.status === 'COMPLETED' ? 100 : 0);
+    const pct = rawPct.toFixed(1);
+
     const isDead = t.error_message && (t.error_message.includes('404') || t.error_message.includes('Dead link'));
     const statusLabel = isDead ? 'DEAD LINK' : t.status;
     const id = escapeHtml(t.id);
+    const sizeTotalText = t.file_size > 0 ? formatBytes(t.file_size) : 'Pending';
+    const etaText = computeTaskEta(t);
 
     let row = existingRows.get(String(t.id));
 
-    // While the user has the "Switch Net" dropdown open, patch only the live numeric cells
-    // so the native <select> popup is not destroyed by a re-render.
+    const segCount = t.segments ? t.segments.length : 0;
+    const adapterListKey = t.status === 'DOWNLOADING' && activeAdapters.length > 1
+      ? activeAdapters.map(a => a.ip_address).join(',')
+      : '';
+    const structSig = `${t.filename}|${t.status}|${t.assigned_adapter || ''}|${t.error_message || ''}|${segCount}|${adapterListKey}`;
     const activeSelect = row ? row.querySelector('.adapter-hand-select') : null;
-    if (activeSelect && document.activeElement === activeSelect && t.status === 'DOWNLOADING') {
-      row.querySelector('.mini-progress-fill').style.width = `${pct}%`;
-      row.querySelector('.mini-progress-label').textContent = `${pct}%`;
-      row.querySelector('.size-cell').innerHTML = `${formatBytes(t.downloaded_bytes)} <span class="text-dim">/</span> ${formatBytes(t.file_size)}`;
-      row.querySelector('.speed-cell').textContent = formatSpeed(t.speed_bytes_sec);
-      row.querySelector('.eta-cell').textContent = formatEta(t.eta_seconds);
+    const isSelectFocused = activeSelect && document.activeElement === activeSelect;
+
+    if (row && row._refs && (row._structSig === structSig || isSelectFocused)) {
+      row._refs.fill.style.width = `${pct}%`;
+      row._refs.pct.textContent = `${pct}%`;
+      row._refs.sizeDl.textContent = formatBytes(safeDownloaded);
+      row._refs.sizeTotal.textContent = sizeTotalText;
+      row._refs.speed.textContent = t.status === 'DOWNLOADING' ? formatSpeed(t.speed_bytes_sec) : '--';
+      row._refs.eta.textContent = etaText;
+      if (row._refs.segChunks && t.segments) {
+        t.segments.forEach((seg, si) => {
+          const chunkEl = row._refs.segChunks[si];
+          if (!chunkEl) return;
+          const segPct = seg.total_bytes > 0 ? Math.min(100, Math.round((seg.downloaded_bytes / seg.total_bytes) * 100)) : (seg.status === 'COMPLETED' ? 100 : 0);
+          const color = seg.assigned_adapter && seg.assigned_adapter.includes('Wi-Fi') ? 'var(--accent-cyan)' : 'var(--status-success)';
+          chunkEl.style.background = color;
+          chunkEl.style.opacity = seg.status === 'COMPLETED' ? '1' : '0.65';
+          chunkEl.title = `Segment ${seg.index + 1}: ${segPct}% (${seg.assigned_adapter || 'Auto'})`;
+        });
+      }
+      if (tbody.children[index] !== row) {
+        tbody.insertBefore(row, tbody.children[index] || null);
+      }
       return;
     }
 
@@ -376,10 +501,10 @@ function renderTasks(tasks, adapters) {
       segmentsHtml = `
         <div class="segment-bar-container" title="Multi-Segment Parallel Streams (${t.segments.length} segments)">
           ${t.segments.map(seg => {
-            const segPct = seg.total_bytes > 0 ? Math.min(100, Math.round((seg.downloaded_bytes / seg.total_bytes) * 100)) : (seg.status === 'COMPLETED' ? 100 : 0);
-            const color = seg.assigned_adapter && seg.assigned_adapter.includes('Wi-Fi') ? 'var(--accent-cyan)' : 'var(--status-success)';
-            return `<div class="segment-bar-chunk" style="width: ${100 / t.segments.length}%; background: ${color}; opacity: ${seg.status === 'COMPLETED' ? 1 : 0.65};" title="Segment ${seg.index + 1}: ${segPct}% (${escapeHtml(seg.assigned_adapter || 'Auto')})"></div>`;
-          }).join('')}
+        const segPct = seg.total_bytes > 0 ? Math.min(100, Math.round((seg.downloaded_bytes / seg.total_bytes) * 100)) : (seg.status === 'COMPLETED' ? 100 : 0);
+        const color = seg.assigned_adapter && seg.assigned_adapter.includes('Wi-Fi') ? 'var(--accent-cyan)' : 'var(--status-success)';
+        return `<div class="segment-bar-chunk" style="width: ${100 / t.segments.length}%; background: ${color}; opacity: ${seg.status === 'COMPLETED' ? 1 : 0.65};" title="Segment ${seg.index + 1}: ${segPct}% (${escapeHtml(seg.assigned_adapter || 'Auto')})"></div>`;
+      }).join('')}
         </div>`;
     }
 
@@ -391,7 +516,7 @@ function renderTasks(tasks, adapters) {
             </svg>
             <span class="file-title">${escapeHtml(t.filename)}</span>
           </div>
-          ${t.error_message ? `<div class="file-diag-error font-mono">${escapeHtml(t.error_message)}</div>` : ''}
+          ${t.error_message ? `<div class="file-diag-error font-mono" title="${escapeHtml(t.error_message)}">${escapeHtml(t.error_message)}</div>` : ''}
           ${segmentsHtml}
         </td>
         <td class="adapter-select-cell">
@@ -409,9 +534,9 @@ function renderTasks(tasks, adapters) {
           </div>
           <div class="mini-progress-label tabular font-mono">${pct}%</div>
         </td>
-        <td class="tabular font-mono size-cell">${formatBytes(t.downloaded_bytes)} <span class="text-dim">/</span> ${formatBytes(t.file_size)}</td>
+        <td class="tabular font-mono size-cell"><span class="size-dl">${formatBytes(safeDownloaded)}</span> <span class="text-dim">/</span> <span class="size-total">${sizeTotalText}</span></td>
         <td class="tabular font-mono speed-cell">${t.status === 'DOWNLOADING' ? formatSpeed(t.speed_bytes_sec) : '--'}</td>
-        <td class="tabular font-mono eta-cell text-dim">${t.status === 'DOWNLOADING' ? formatEta(t.eta_seconds) : '--'}</td>
+        <td class="tabular font-mono eta-cell text-dim">${etaText}</td>
         <td>
           <span class="chip chip-${escapeHtml(String(t.status).toLowerCase())}">
             <span class="chip-dot"></span>
@@ -453,12 +578,17 @@ function renderTasks(tasks, adapters) {
       row = document.createElement('tr');
       row.setAttribute('data-task-id', t.id);
     }
-    // Compare against our cached string (the browser normalizes innerHTML, so comparing
-    // row.innerHTML to the template literal would never match and re-render every tick).
-    if (row._sig !== rowHtml) {
-      row.innerHTML = rowHtml;
-      row._sig = rowHtml;
-    }
+    row.innerHTML = rowHtml;
+    row._structSig = structSig;
+    row._refs = {
+      fill: row.querySelector('.mini-progress-fill'),
+      pct: row.querySelector('.mini-progress-label'),
+      sizeDl: row.querySelector('.size-dl'),
+      sizeTotal: row.querySelector('.size-total'),
+      speed: row.querySelector('.speed-cell'),
+      eta: row.querySelector('.eta-cell'),
+      segChunks: row.querySelectorAll('.segment-bar-chunk'),
+    };
     if (tbody.children[index] !== row) {
       tbody.insertBefore(row, tbody.children[index] || null);
     }
@@ -468,6 +598,8 @@ function renderTasks(tasks, adapters) {
 function renderExtractions(jobs) {
   const sec = document.getElementById('extraction-section');
   const container = document.getElementById('groups-container');
+  if (!sec || !container) return;
+
   if (!jobs || Object.keys(jobs).length === 0) {
     sec.style.display = 'none';
     return;
@@ -482,14 +614,14 @@ function renderExtractions(jobs) {
           <path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/>
         </svg>
         <div>
-          <div class="extraction-group font-mono">${group}</div>
-          <div class="extraction-dir">${j.output_dir}</div>
+          <div class="extraction-group font-mono">${escapeHtml(group)}</div>
+          <div class="extraction-dir">${escapeHtml(j.output_dir)}</div>
         </div>
       </div>
       <div>
         <span class="chip chip-${j.status === 'SUCCESS' ? 'completed' : (j.status === 'FAILED' ? 'failed' : 'downloading')}">
           <span class="chip-dot"></span>
-          ${j.status === 'EXTRACTING' ? '7-Zip Unpacking...' : j.status}
+          ${j.status === 'EXTRACTING' ? '7-Zip Unpacking...' : escapeHtml(j.status)}
         </span>
       </div>
     </div>
@@ -509,7 +641,7 @@ function showToast(message, type = 'info') {
   toast.className = `toast toast-${type}`;
   toast.innerHTML = `
     <span class="toast-dot"></span>
-    <span class="toast-text">${message}</span>
+    <span class="toast-text">${escapeHtml(message)}</span>
   `;
   container.appendChild(toast);
   requestAnimationFrame(() => {
@@ -568,6 +700,8 @@ async function manualHandoff(taskId, targetIp) {
 
 async function reorderTask(taskId, direction) {
   try {
+    currentSortColumn = '';
+    document.querySelectorAll('.th-sort-arrow').forEach(a => a.innerText = '');
     await fetch(`/api/queue/reorder/${taskId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -670,7 +804,7 @@ if (sortSelect) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ criterion: val })
       });
-    } catch (err) {}
+    } catch (err) { }
     renderTasks(currentTasks, currentAdapters);
   });
 }
@@ -756,8 +890,21 @@ document.getElementById('btn-settings-toggle').addEventListener('click', async (
     const res = await fetch('/api/settings');
     const s = await res.json();
     document.getElementById('setting-rd-token').value = s.rd_token || '';
-    document.getElementById('setting-concurrency').value = s.max_concurrency || 4;
-    document.getElementById('setting-segments').value = s.segments_per_file || 4;
+    const autoTuneEl = document.getElementById('setting-auto-tune');
+    if (autoTuneEl) {
+      autoTuneEl.checked = s.auto_tune !== false;
+      const syncManualLock = () => {
+        const locked = autoTuneEl.checked;
+        ['setting-concurrency', 'setting-segments', 'setting-buffer-size'].forEach(id => {
+          const el = document.getElementById(id);
+          if (el) el.disabled = locked;
+        });
+      };
+      autoTuneEl.onchange = syncManualLock;
+      syncManualLock();
+    }
+    document.getElementById('setting-concurrency').value = s.max_concurrency || 2;
+    document.getElementById('setting-segments').value = s.segments_per_file || 2;
     document.getElementById('setting-buffer-size').value = s.buffer_size_kb || 256;
     document.getElementById('setting-speed-limit').value = s.speed_limit_mbps || 0;
     document.getElementById('setting-max-retries').value = s.max_retries || 3;
@@ -766,6 +913,8 @@ document.getElementById('btn-settings-toggle').addEventListener('click', async (
     document.getElementById('setting-work-stealing').checked = s.work_stealing_enabled !== false;
     document.getElementById('setting-auto-extract').checked = s.auto_extract !== false;
     document.getElementById('setting-delete-archive').checked = !!s.delete_archive_after_extract;
+    document.getElementById('setting-auto-resume').checked = s.auto_resume_on_start !== false;
+    document.getElementById('setting-auto-retry').checked = s.auto_retry_failed !== false;
     document.getElementById('setting-default-dir').value = s.download_dir || '';
     settingsModal.style.display = 'flex';
   } catch (e) {
@@ -775,6 +924,16 @@ document.getElementById('btn-settings-toggle').addEventListener('click', async (
 
 document.getElementById('btn-close-settings').addEventListener('click', () => settingsModal.style.display = 'none');
 document.getElementById('btn-cancel-settings').addEventListener('click', () => settingsModal.style.display = 'none');
+
+settingsModal.addEventListener('click', (e) => {
+  if (e.target === settingsModal) settingsModal.style.display = 'none';
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && settingsModal.style.display === 'flex') {
+    settingsModal.style.display = 'none';
+  }
+});
 
 document.getElementById('btn-save-settings').addEventListener('click', async () => {
   const rdToken = document.getElementById('setting-rd-token').value;
@@ -788,6 +947,8 @@ document.getElementById('btn-save-settings').addEventListener('click', async () 
   const workStealing = document.getElementById('setting-work-stealing').checked;
   const autoExtract = document.getElementById('setting-auto-extract').checked;
   const deleteArchive = document.getElementById('setting-delete-archive').checked;
+  const autoResume = document.getElementById('setting-auto-resume').checked;
+  const autoRetry = document.getElementById('setting-auto-retry').checked;
   const defaultDir = document.getElementById('setting-default-dir').value;
 
   try {
@@ -796,6 +957,7 @@ document.getElementById('btn-save-settings').addEventListener('click', async () 
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         rd_token: rdToken,
+        auto_tune: document.getElementById('setting-auto-tune')?.checked !== false,
         max_concurrency: concurrency,
         segments_per_file: segments,
         buffer_size_kb: bufferSize,
@@ -806,9 +968,15 @@ document.getElementById('btn-save-settings').addEventListener('click', async () 
         work_stealing_enabled: workStealing,
         auto_extract: autoExtract,
         delete_archive_after_extract: deleteArchive,
+        auto_resume_on_start: autoResume,
+        auto_retry_failed: autoRetry,
         download_dir: defaultDir
       })
     });
+    const mainDirInput = document.getElementById('download-dir');
+    if (mainDirInput && defaultDir) mainDirInput.value = defaultDir;
+    const mainAutoExtract = document.getElementById('auto-extract-toggle');
+    if (mainAutoExtract) mainAutoExtract.checked = autoExtract;
     settingsModal.style.display = 'none';
     showToast('Settings saved successfully.', 'success');
   } catch (e) {
@@ -816,7 +984,24 @@ document.getElementById('btn-save-settings').addEventListener('click', async () 
   }
 });
 
-// Immediate Eager Boot Telemetry
+// Hydrate Destination Field & Eager Boot Telemetry
+async function hydrateDefaults() {
+  try {
+    const res = await fetch('/api/settings');
+    if (res.ok) {
+      const s = await res.json();
+      const mainDirInput = document.getElementById('download-dir');
+      if (mainDirInput && !mainDirInput.value && s.download_dir) {
+        mainDirInput.value = s.download_dir;
+      }
+      const autoExtractEl = document.getElementById('auto-extract-toggle');
+      if (autoExtractEl && typeof s.auto_extract === 'boolean') {
+        autoExtractEl.checked = s.auto_extract;
+      }
+    }
+  } catch (e) { }
+}
+
 async function fetchInitialStatus() {
   try {
     const res = await fetch('/api/status');
@@ -830,6 +1015,6 @@ async function fetchInitialStatus() {
 }
 
 // Initial Boot Sequence
+hydrateDefaults();
 fetchInitialStatus();
 connectWebSocket();
-

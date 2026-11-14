@@ -1,11 +1,12 @@
 """Session and State Persistence Manager.
 
 Saves download queues, task progress, and user settings to a JSON file
-so downloading resumes seamlessly across application restarts.
+with automatic .bak fallback recovery across application restarts.
 """
 
 import json
 import os
+import shutil
 import threading
 from typing import Any, Dict, List
 from engine.task import DownloadTask
@@ -16,43 +17,63 @@ class SessionManager:
 
     def __init__(self, filepath: str = "download_session.json"):
         self.filepath = filepath
-        # save_session may be called from worker threads (asyncio.to_thread) concurrently;
-        # serialize writers so they never clobber the shared .tmp file.
+        self.backup_filepath = f"{filepath}.bak"
         self._save_lock = threading.Lock()
 
-    def load_session(self) -> Dict[str, Any]:
-        """Loads saved session settings and tasks from disk."""
-        if not os.path.exists(self.filepath):
-            return {
-                "settings": {
-                    "download_dir": os.path.join(os.path.expanduser("~"), "Downloads", "PartHarvester"),
-                    "max_concurrency": 4,
-                    "auto_extract": True,
-                    "rd_token": "",
-                },
-                "tasks": [],
-            }
+    def _default_state(self) -> Dict[str, Any]:
+        return {
+            "settings": {
+                "download_dir": os.path.join(
+                    os.path.expanduser("~"), "Downloads", "PartHarvester"
+                ),
+                "max_concurrency": 4,
+                "auto_extract": True,
+                "auto_resume_on_start": True,
+                "rd_token": "",
+            },
+            "tasks": [],
+        }
 
-        try:
-            with open(self.filepath, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                return data
-        except Exception:
-            return {"settings": {}, "tasks": []}
+    def load_session(self) -> Dict[str, Any]:
+        """Loads saved session settings and tasks from disk with .bak recovery."""
+        for candidate in (self.filepath, self.backup_filepath):
+            if not os.path.exists(candidate):
+                continue
+            try:
+                with open(candidate, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict) and "tasks" in data:
+                    return data
+            except Exception:
+                continue
+
+        return self._default_state()
 
     def save_session(self, settings: Dict[str, Any], tasks: List[DownloadTask]) -> None:
-        """Atomically saves current settings and tasks to disk."""
+        """Atomically saves current settings and compact task state to disk."""
         try:
+            serialized_tasks = []
+            for task in tasks:
+                d = task.model_dump()
+                # Segments are reconstructed from .part.meta journals on boot
+                d["segments"] = []
+                d["speed_bytes_sec"] = 0.0
+                d["eta_seconds"] = None
+                serialized_tasks.append(d)
+
             data = {
                 "settings": settings,
-                "tasks": [task.model_dump() for task in tasks],
+                "tasks": serialized_tasks,
             }
             tmp_path = f"{self.filepath}.tmp"
             with self._save_lock:
                 with open(tmp_path, "w", encoding="utf-8") as f:
-                    json.dump(data, f, indent=2)
+                    json.dump(data, f, separators=(",", ":"))
+                if os.path.exists(self.filepath):
+                    try:
+                        shutil.copy2(self.filepath, self.backup_filepath)
+                    except Exception:
+                        pass
                 os.replace(tmp_path, self.filepath)
         except Exception:
-            # Non-fatal error saving session
             pass
-

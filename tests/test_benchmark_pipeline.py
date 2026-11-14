@@ -136,5 +136,5 @@ class AsyncMockSession:
     def __init__(self, session):
         self._session = session
 
-    async def __call__(self, adapter_ip):
+    async def __call__(self, adapter_ip, force_http1=True):
         return self._session
