@@ -47,7 +47,7 @@ class SmartAutoTuner:
         msg = (error_msg or "").lower()
         is_socket_pressure = any(
             sig in msg
-            for sig in ("56", "reset", "truncated", "429", "503", "timeout", "stalled", "closed", "200")
+            for sig in ("56", "reset", "truncated", "429", "503", "timeout", "stalled", "closed", "http 200", "instead of 206")
         )
         step = 2 if is_socket_pressure else 1
         cur_penalty = self._penalty_by_ip.get(adapter_ip, 0)

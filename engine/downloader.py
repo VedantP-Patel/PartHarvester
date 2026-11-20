@@ -510,7 +510,12 @@ class AsyncDownloader:
     def open_download_folder(folder_path: str) -> bool:
         try:
             if os.path.exists(folder_path):
-                subprocess.Popen(["explorer.exe", folder_path])
+                if sys.platform == "win32":
+                    subprocess.Popen(["explorer.exe", folder_path])
+                elif sys.platform == "darwin":
+                    subprocess.Popen(["open", folder_path])
+                else:
+                    subprocess.Popen(["xdg-open", folder_path])
                 return True
         except Exception:
             pass
@@ -525,11 +530,15 @@ class AsyncDownloader:
         target = filepath if os.path.exists(filepath) else partpath
         try:
             if os.path.exists(target):
-                subprocess.Popen(["explorer.exe", f"/select,{target}"])
+                if sys.platform == "win32":
+                    subprocess.Popen(["explorer.exe", f"/select,{target}"])
+                elif sys.platform == "darwin":
+                    subprocess.Popen(["open", "-R", target])
+                else:
+                    subprocess.Popen(["xdg-open", task.destination_dir])
                 return True
             elif os.path.exists(task.destination_dir):
-                subprocess.Popen(["explorer.exe", task.destination_dir])
-                return True
+                return self.open_download_folder(task.destination_dir)
         except Exception:
             pass
         return False
@@ -545,7 +554,10 @@ class AsyncDownloader:
                 self._active_async_tasks[task_id].cancel()
             j = self._journals.get(task_id)
             if j and task_id in self.tasks:
-                asyncio.create_task(j.save_async(force=True))
+                try:
+                    asyncio.get_running_loop().create_task(j.save_async(force=True))
+                except RuntimeError:
+                    j.save_sync(force=True)
             return True
         elif task.status == TaskStatus.QUEUED:
             task.status = TaskStatus.PAUSED
@@ -855,6 +867,9 @@ class AsyncDownloader:
                     task.status = TaskStatus.FAILED
                     task.error_message = f"Download error: {err_str}"
         finally:
+            cur_t = asyncio.current_task()
+            if cur_t is not None and self._active_async_tasks.get(task.id) is cur_t:
+                self._active_async_tasks.pop(task.id, None)
             j = self._journals.get(task.id)
             if j and task.id in self.tasks and task.status != TaskStatus.COMPLETED:
                 await j.save_async(force=True)
@@ -925,8 +940,23 @@ class AsyncDownloader:
             except RangeNotSupportedOrExpiredError:
                 self.link_manager.invalidate_cache(task.original_url)
                 await self._resolve_fresh_url(task, interface_ip, use_cache=False)
-                await self._download_segmented_stream(task, interface_ip, target_segments=effective_segs)
-                return
+                try:
+                    await self._download_segmented_stream(task, interface_ip, target_segments=effective_segs)
+                    return
+                except RangeNotSupportedOrExpiredError:
+                    # Origin does not support HTTP Range requests; reset sparse artifacts and fall back to single stream
+                    task.supports_range = False
+                    task.segments = []
+                    part_filepath = os.path.join(task.destination_dir, f"{task.filename}.part")
+                    j = self._journals.pop(task.id, None)
+                    if j:
+                        j.cleanup()
+                    if os.path.exists(part_filepath):
+                        try:
+                            os.remove(part_filepath)
+                        except Exception:
+                            pass
+                    task.downloaded_bytes = 0
 
         self._active_pinned_ips.pop(task.id, None)
         await self._download_single_stream(task, interface_ip)
@@ -979,6 +1009,7 @@ class AsyncDownloader:
         in_flight_by_seg: Dict[int, int] = {}
         active_worker_tasks: List[asyncio.Task] = []
         segment_ip_map: Dict[int, Optional[str]] = {}
+        segment_last_chunk_ts: Dict[int, float] = {}
 
         def refresh_task_speed() -> None:
             task.speed_bytes_sec = sum(
@@ -1176,6 +1207,7 @@ class AsyncDownloader:
                                 await flush_write_buffer()
 
                             seg_bytes_since += c_len
+                            segment_last_chunk_ts[seg_key] = time.monotonic()
 
                             if self.speed_limit_mbps > 0:
                                 await self._token_limiter.consume(c_len)
@@ -1284,12 +1316,24 @@ class AsyncDownloader:
                 unflushed_by_seg.pop(seg_key, None)
                 in_flight_by_seg.pop(seg_key, None)
                 segment_ip_map.pop(seg_key, None)
+                segment_last_chunk_ts.pop(seg_key, None)
 
         async def hotplug_and_tail_scaler_loop() -> None:
             while task.status == TaskStatus.DOWNLOADING:
                 await asyncio.sleep(1.0)
                 if task.status != TaskStatus.DOWNLOADING:
                     break
+
+                now_mono = time.monotonic()
+                speed_decayed = False
+                for seg in task.segments:
+                    if seg.status == "DOWNLOADING" and seg.speed_bytes_sec > 0:
+                        last_ts = segment_last_chunk_ts.get(id(seg))
+                        if last_ts is not None and (now_mono - last_ts) > 1.5:
+                            seg.speed_bytes_sec = 0.0
+                            speed_decayed = True
+                if speed_decayed:
+                    refresh_task_speed()
 
                 live_workers = sum(1 for t in active_worker_tasks if not t.done())
                 target_workers = self._compute_effective_segments(task)
@@ -1299,14 +1343,17 @@ class AsyncDownloader:
                 if best_ad is None or best_ad.active_connections >= best_ad.max_concurrency_cap:
                     continue
 
-                # Scale up if worker count < target OR if fast adapter is >=2x faster than a straggler
+                # Scale up if worker count < target OR if fast/idle adapter can accelerate a straggler
                 should_steal = live_workers < target_workers
                 if not should_steal and self.work_stealing_enabled and live_workers < 16:
                     slowest_speed = min(
                         (s.speed_bytes_sec for s in task.segments if s.status == "DOWNLOADING"),
                         default=0.0,
                     )
-                    if best_ad.ewma_speed_bytes > max(2 * 1024 * 1024, slowest_speed * 2.2):
+                    unprobed_idle = best_ad.ewma_speed_bytes == 0.0 and best_ad.active_connections == 0
+                    if best_ad.ewma_speed_bytes > max(2 * 1024 * 1024, slowest_speed * 2.2) or (
+                        unprobed_idle and slowest_speed < 2 * 1024 * 1024
+                    ):
                         should_steal = True
 
                 if should_steal:

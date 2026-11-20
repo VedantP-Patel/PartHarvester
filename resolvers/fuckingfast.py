@@ -46,6 +46,16 @@ class FuckingFastResolver:
                     pass
 
     @classmethod
+    async def close_all(cls) -> None:
+        for key in list(cls._sessions.keys()):
+            s = cls._sessions.pop(key, None)
+            if s and not getattr(s, "_closed", False):
+                try:
+                    await s.close()
+                except Exception:
+                    pass
+
+    @classmethod
     async def resolve(
         cls,
         url: str,
@@ -96,14 +106,19 @@ class FuckingFastResolver:
                 if resp.status_code == 404 or "Not Found" in resp.text[:500]:
                     raise ValueError("Dead link (HTTP 404 Not Found on FuckingFast). File was removed or DMCA'd.")
 
-                if resp.status_code != 200:
-                    body_head = resp.text[:2500]
+                body_head = resp.text[:2500]
                 if (
                     "cf-browser-verification" in body_head
                     or "challenge-platform" in body_head
                     or "<title>Just a moment...</title>" in body_head
                 ):
                     cls._evict_session(interface, profile)
+                    await asyncio.sleep(1.0 * (attempt + 1))
+                    continue
+
+                if resp.status_code != 200:
+                    cls._evict_session(interface, profile)
+                    last_error = ValueError(f"HTTP {resp.status_code}")
                     await asyncio.sleep(1.0 * (attempt + 1))
                     continue
 

@@ -142,10 +142,11 @@ class NetworkManager:
             curr_speed = self.get_adapter_speed(ip, now=now)
             ewma = self._ewma_speeds.get(ip, 0.0)
             last_upd = self._last_ewma_update.get(ip)
-            if curr_speed == 0.0 and ewma > 0.0 and last_upd is not None:
+            if ewma > 0.0 and last_upd is not None:
                 idle_sec = now - last_upd
                 if idle_sec > 2.0:
-                    ewma = ewma * (0.5 ** ((idle_sec - 2.0) / 5.0))
+                    half_life = 5.0 if curr_speed == 0.0 else 3.0
+                    ewma = ewma * (0.5 ** ((idle_sec - 2.0) / half_life))
                     if ewma <= 1024.0:
                         ewma = 0.0
                     self._ewma_speeds[ip] = ewma

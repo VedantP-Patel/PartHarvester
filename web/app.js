@@ -64,6 +64,7 @@ function connectWebSocket() {
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
     }
+    fetchInitialStatus();
   };
 
   socket.onmessage = (event) => {
@@ -470,7 +471,7 @@ function renderTasks(tasks, adapters) {
       : '';
     const structSig = `${t.filename}|${t.status}|${t.assigned_adapter || ''}|${t.error_message || ''}|${segCount}|${adapterListKey}`;
     const activeSelect = row ? row.querySelector('.adapter-hand-select') : null;
-    const isSelectFocused = activeSelect && document.activeElement === activeSelect;
+    const isSelectFocused = activeSelect && document.activeElement === activeSelect && t.status === 'DOWNLOADING';
 
     if (row && row._refs && (row._structSig === structSig || isSelectFocused)) {
       row._refs.fill.style.width = `${pct}%`;
@@ -616,6 +617,7 @@ function renderExtractions(jobs) {
         <div>
           <div class="extraction-group font-mono">${escapeHtml(group)}</div>
           <div class="extraction-dir">${escapeHtml(j.output_dir)}</div>
+          ${j.status === 'FAILED' && j.error ? `<div class="file-diag-error font-mono">${escapeHtml(j.error)}</div>` : ''}
         </div>
       </div>
       <div>
@@ -669,14 +671,17 @@ async function toggleAdapter(ip, enabled) {
 
 async function pauseTask(taskId) {
   await fetch(`/api/pause/${taskId}`, { method: 'POST' });
+  fetchInitialStatus();
 }
 
 async function resumeTask(taskId) {
   await fetch(`/api/resume/${taskId}`, { method: 'POST' });
+  fetchInitialStatus();
 }
 
 async function removeTask(taskId) {
   await fetch(`/api/task/${taskId}`, { method: 'DELETE' });
+  fetchInitialStatus();
 }
 
 async function manualHandoff(taskId, targetIp) {
@@ -871,16 +876,19 @@ document.getElementById('btn-add-links').addEventListener('click', async () => {
 document.getElementById('btn-pause-all').addEventListener('click', async () => {
   await fetch('/api/pause-all', { method: 'POST' });
   showToast('All downloads paused.', 'info');
+  fetchInitialStatus();
 });
 
 document.getElementById('btn-resume-all').addEventListener('click', async () => {
   await fetch('/api/resume-all', { method: 'POST' });
   showToast('Resuming all queued downloads.', 'info');
+  fetchInitialStatus();
 });
 
 document.getElementById('btn-retry-failed').addEventListener('click', async () => {
   await fetch('/api/retry-failed', { method: 'POST' });
   showToast('Retrying failed parts...', 'info');
+  fetchInitialStatus();
 });
 
 // Comprehensive Settings Modal
@@ -903,8 +911,8 @@ document.getElementById('btn-settings-toggle').addEventListener('click', async (
       autoTuneEl.onchange = syncManualLock;
       syncManualLock();
     }
-    document.getElementById('setting-concurrency').value = s.max_concurrency || 2;
-    document.getElementById('setting-segments').value = s.segments_per_file || 2;
+    document.getElementById('setting-concurrency').value = s.max_concurrency || 4;
+    document.getElementById('setting-segments').value = s.segments_per_file || 4;
     document.getElementById('setting-buffer-size').value = s.buffer_size_kb || 256;
     document.getElementById('setting-speed-limit').value = s.speed_limit_mbps || 0;
     document.getElementById('setting-max-retries').value = s.max_retries || 3;

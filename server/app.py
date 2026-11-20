@@ -92,6 +92,12 @@ async def _on_task_complete(completed_task: DownloadTask) -> None:
                 out_dir = os.path.join(gdata["destination_dir"], clean_prefix)
                 job = archive_extractor.extraction_jobs.get(group_key)
                 if not job:
+                    archive_extractor.extraction_jobs[group_key] = {
+                        "status": "QUEUED",
+                        "archive_path": first_file,
+                        "output_dir": out_dir,
+                        "error": None,
+                    }
                     part_paths = [
                         os.path.join(t.destination_dir, t.filename)
                         for t in gdata["parts"].values()
@@ -252,33 +258,44 @@ async def add_links(req: AddLinksRequest):
     return {"status": "ok", "count": len(created_tasks), "tasks": [t.id for t in created_tasks]}
 
 
+async def _persist_session_async() -> None:
+    await asyncio.to_thread(session_mgr.save_session, settings, list(downloader.tasks.values()))
+
+
 @app.post("/api/pause/{task_id}")
 async def pause_task(task_id: str):
     success = downloader.pause_task(task_id)
+    if success:
+        asyncio.create_task(_persist_session_async())
     return {"status": "ok" if success else "error"}
 
 
 @app.post("/api/resume/{task_id}")
 async def resume_task(task_id: str):
     success = downloader.resume_task(task_id)
+    if success:
+        asyncio.create_task(_persist_session_async())
     return {"status": "ok" if success else "error"}
 
 
 @app.post("/api/pause-all")
 async def pause_all():
     downloader.pause_all()
+    asyncio.create_task(_persist_session_async())
     return {"status": "ok"}
 
 
 @app.post("/api/resume-all")
 async def resume_all():
     downloader.resume_all()
+    asyncio.create_task(_persist_session_async())
     return {"status": "ok"}
 
 
 @app.post("/api/retry-failed")
 async def retry_failed():
     downloader.retry_failed()
+    asyncio.create_task(_persist_session_async())
     return {"status": "ok"}
 
 
@@ -364,9 +381,10 @@ async def update_settings(req: SettingsRequest):
         settings["auto_tune"] = bool(req.auto_tune)
         downloader.set_auto_tune(settings["auto_tune"])
     if not downloader.auto_tune_enabled:
-        if req.max_concurrency:
-            settings["max_concurrency"] = req.max_concurrency
-            downloader.set_concurrency(req.max_concurrency)
+        if req.max_concurrency is not None:
+            clamped_conc = max(1, min(12, int(req.max_concurrency)))
+            settings["max_concurrency"] = clamped_conc
+            downloader.set_concurrency(clamped_conc)
         if req.segments_per_file is not None:
             settings["segments_per_file"] = max(1, min(16, req.segments_per_file))
             downloader.segments_per_file = settings["segments_per_file"]
@@ -422,9 +440,19 @@ async def manual_extract(group_key: str):
     if not gdata or not gdata.get("first_part"):
         return {"status": "error", "message": "Group or first part archive not found."}
 
+    existing_job = archive_extractor.extraction_jobs.get(group_key)
+    if existing_job and existing_job.get("status") in ("QUEUED", "EXTRACTING"):
+        return {"status": "ok", "message": "Extraction already in progress."}
+
     clean_prefix = gdata.get("prefix", group_key).strip("._-")
     first_file = os.path.join(gdata["destination_dir"], gdata["first_part"])
     out_dir = os.path.join(gdata["destination_dir"], clean_prefix)
+    archive_extractor.extraction_jobs[group_key] = {
+        "status": "QUEUED",
+        "archive_path": first_file,
+        "output_dir": out_dir,
+        "error": None,
+    }
     asyncio.create_task(archive_extractor.extract_archive(first_file, out_dir, group_key))
     return {"status": "ok", "message": f"Extraction started for {clean_prefix}"}
 

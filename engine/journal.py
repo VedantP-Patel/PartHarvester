@@ -37,6 +37,7 @@ class IntervalJournal:
         self._io_lock = threading.Lock()
         self._last_flush_ts = 0.0
         self._dirty = False
+        self._closed = False
         self._load_or_bootstrap()
 
     def _query_ntfs_allocated_ranges(self) -> List[Tuple[int, int]]:
@@ -152,6 +153,8 @@ class IntervalJournal:
         self._dirty = True
 
     def add_range(self, start: int, end: int, flush_interval: float = 1.5) -> None:
+        if self._closed:
+            return
         should_flush = False
         with self._lock:
             self._insert_locked(start, end)
@@ -239,6 +242,8 @@ class IntervalJournal:
         return slices
 
     def save_sync(self, force: bool = True) -> None:
+        if self._closed:
+            return
         with self._lock:
             if not force and not self._dirty:
                 return
@@ -266,6 +271,7 @@ class IntervalJournal:
         await asyncio.to_thread(self.save_sync, force)
 
     def cleanup(self) -> None:
+        self._closed = True
         with self._io_lock:
             try:
                 if os.path.exists(self.meta_path):
