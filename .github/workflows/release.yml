@@ -76,6 +76,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           projectPath: desktop-app/crates/tauri-app
+          args: --config '{"build":{"beforeBuildCommand":""}}'
           tagName: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
           releaseName: "PartHarvester ${{ github.ref_name }}"
           releaseBody: "Cross-platform native desktop builds (Windows & Linux)."
