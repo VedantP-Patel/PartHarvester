@@ -34,18 +34,18 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
 ### 1-Click Build & Launch
-- **Windows**: `v2\run.bat`
-- **Linux**: `./v2/run.sh`
+- **Windows**: `desktop-app\run.bat`
+- **Linux**: `./desktop-app/run.sh`
 
 ### Manual Commands
 ```bash
 # Build UI
-npm --prefix v2/ui install
-npm --prefix v2/ui run build
+npm --prefix desktop-app/ui install
+npm --prefix desktop-app/ui run build
 
 # Run Rust engine unit tests
-cargo test --manifest-path v2/Cargo.toml -p core-engine
+cargo test --manifest-path desktop-app/Cargo.toml -p core-engine
 
 # Build release desktop binary
-cargo build --manifest-path v2/Cargo.toml --release -p partharvester-tauri --features custom-protocol
+cargo build --manifest-path desktop-app/Cargo.toml --release -p partharvester-tauri --features custom-protocol
 ```

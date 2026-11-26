@@ -46,11 +46,11 @@ scratch/
 *.7z
 *.zip
 
-# Rust / Tauri v2
-v2/target/
-v2/crates/tauri-app/gen/
-v2/ui/node_modules/
-v2/ui/dist/
+# Rust / Tauri Desktop App
+desktop-app/target/
+desktop-app/crates/tauri-app/gen/
+desktop-app/ui/node_modules/
+desktop-app/ui/dist/
 
 # Operating System
 .DS_Store

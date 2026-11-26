@@ -30,7 +30,17 @@ pause
 exit /b 1
 
 :RUN
-echo Starting PartHarvester...
+"%PY_EXE%" -c "import fastapi, uvicorn, curl_cffi" >nul 2>nul
+if %ERRORLEVEL% neq 0 (
+    echo Installing Python dependencies from requirements.txt...
+    "%PY_EXE%" -m pip install -r requirements.txt
+    if %ERRORLEVEL% neq 0 (
+        echo [ERROR] Failed to install dependencies.
+        pause
+        exit /b 1
+    )
+)
+echo Starting PartHarvester Web Edition...
 "%PY_EXE%" main.py
 
 if %ERRORLEVEL% neq 0 (

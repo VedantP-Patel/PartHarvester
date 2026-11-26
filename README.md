@@ -55,32 +55,32 @@ PartHarvester is available in **two full-featured editions** (both share identic
 
 | Edition | Best For | Platforms | Launch |
 | :--- | :--- | :--- | :--- |
-| **Native Desktop (`v2/`)** | Fastest lock-free Rust engine, SQLite WAL, native taskbar progress | Windows, Linux | Download from **Releases** or run `v2\run.bat` / `./v2/run.sh` |
-| **Web Edition (root)** | Zero-compile browser UI (`http://localhost:5000`), Python only | Windows, Linux, macOS | Run `run.bat` / `./run.sh` |
+| **Native Desktop (`desktop-app/`)** | Fastest lock-free Rust engine, SQLite WAL, native taskbar progress | Windows, Linux | Download from **Releases** or run `desktop-app\run.bat` / `./desktop-app/run.sh` |
+| **Web Edition (`web-edition/`)** | Zero-compile browser UI (`http://localhost:5000`), Python only | Windows, Linux, macOS | Run `web-edition\run.bat` / `./web-edition/run.sh` |
 
 ### 👤 For Normal Users (Zero Build Tools)
 1. **Native Desktop App**: Download the latest pre-built Windows `.exe` or Linux `.AppImage`/`.deb` from **GitHub Releases** and run it directly.
 2. **Web Edition (Lightweight)**:
    - Install **Python 3.11+** (and **7-Zip** for auto-extraction).
-   - **Windows**: Double-click `run.bat`
-   - **Linux / macOS**: Run `./run.sh`
+   - **Windows**: Double-click `web-edition\run.bat`
+   - **Linux / macOS**: Run `./web-edition/run.sh`
    - Your browser opens automatically to `http://localhost:5000`.
 
-### 🛠️ For Developers (Building v2 from Source)
+### 🛠️ For Developers (Building Desktop App from Source)
 - **Windows prerequisites**:
   ```powershell
   winget install OpenJS.NodeJS.LTS Rustlang.Rustup Kitware.CMake LLVM.LLVM NASM.NASM
   ```
-  Then double-click `v2\run.bat` (auto-builds `ui` + `partharvester-tauri.exe`).
+  Then double-click `desktop-app\run.bat` (auto-builds `ui` + `partharvester-tauri.exe`).
 - **Linux (Ubuntu/Debian) prerequisites**:
   ```bash
   sudo apt update && sudo apt install -y build-essential cmake clang nasm pkg-config \
     libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf nodejs npm
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
   ```
-  Then run `./v2/run.sh`.
+  Then run `./desktop-app/run.sh`.
 
-See [v2/README.md](v2/README.md) for detailed v2 architecture and developer commands.
+See [desktop-app/README.md](desktop-app/README.md) for detailed desktop architecture and developer commands.
 
 ---
 
@@ -123,14 +123,15 @@ If you have a Real-Debrid account:
 
 ## 🧪 Running the Test Suite
 
-**v1 (Python Web Edition):**
+**Web Edition (Python):**
 ```powershell
+cd web-edition
 PYTHONPATH=. pytest tests
 ```
 
-**v2 (Rust Core Engine):**
+**Desktop App (Rust Core Engine):**
 ```powershell
-cargo test --manifest-path v2/Cargo.toml -p core-engine
+cargo test --manifest-path desktop-app/Cargo.toml -p core-engine
 ```
 
 ---
@@ -138,49 +139,34 @@ cargo test --manifest-path v2/Cargo.toml -p core-engine
 ## 📂 Project Architecture
 
 ```
-multi-part-downloader/
-├── README.md               # User manual and overview
+PartHarvester/
+├── README.md                  # Quick start, feature overview & repo map
+├── .github/workflows/         # CI tests & automated Windows/Linux releases
 ├── docs/
-│   ├── ARCHITECTURE.md     # Deep-dive technical specifications & cryptography
-│   └── API.md              # REST API and WebSocket protocol reference
-├── engine/
-│   ├── downloader.py       # Async resumable chunked engine
-│   ├── network.py          # Network interface bonding & discovery
-│   ├── session.py          # Session persistence (download_session.json)
-│   └── task.py             # Pydantic v2 data models & state machine
-├── resolvers/
-│   ├── datanodes.py        # DataNodes form handler & unrestrictor
-│   ├── debrider.py         # Real-Debrid API client
-│   ├── fuckingfast.py      # FuckingFast direct stream extractor
-│   ├── generic.py          # PixelDrain, MediaFire, and direct links
-│   ├── manager.py          # Universal router & text parser
-│   └── privatebin.py       # PrivateBin v2 AES-256-GCM client decryptor
-├── extractor/
-│   └── unpacker.py         # Multi-part sequence validator & 7-Zip runner
-├── server/
-│   └── app.py              # FastAPI server & WebSocket telemetry
-├── web/
-│   ├── index.html          # Modern glassmorphism single-page app
-│   ├── style.css           # Styling & micro-animations
-│   └── app.js              # Real-time WebSocket state manager
-├── tests/
-│   ├── test_downloader.py  # Range & session tests
-│   ├── test_network.py     # Interface binding tests
-│   ├── test_privatebin.py  # Decryption verification tests
-│   └── test_unpacker.py    # Multi-part sequence tests
-├── main.py                 # v1 Web Edition entry point
-├── run.bat                 # v1 1-click Windows launcher
-├── run.sh                  # v1 1-click Linux/macOS launcher
-├── requirements.txt        # v1 Python dependencies
-└── v2/                     # v2 Native Desktop App (Rust + Tauri v2 + Svelte 5)
-    ├── README.md           # v2 setup, architecture & build guide
-    ├── Cargo.toml          # Rust workspace (core-engine + tauri-app)
+│   ├── ARCHITECTURE.md        # Technical specifications & cryptography
+│   ├── API.md                 # REST API & WebSocket protocol reference
+│   ├── DESIGN.md              # UI/UX & system design notes
+│   └── PRODUCT.md             # Product requirements & roadmap
+├── web-edition/               # Python + FastAPI Web Edition (Win/Linux/macOS)
+│   ├── engine/                # Async resumable engine & network bonding
+│   ├── resolvers/             # PrivateBin, FuckingFast, DataNodes, Real-Debrid
+│   ├── extractor/             # Multi-part sequence validator & 7-Zip runner
+│   ├── server/                # FastAPI server & WebSocket telemetry
+│   ├── web/                   # Browser dashboard UI
+│   ├── tests/                 # Pytest suite
+│   ├── main.py                # Entry point
+│   ├── requirements.txt       # Python dependencies
+│   ├── run.bat                # 1-click Windows launcher
+│   └── run.sh                 # 1-click Linux/macOS launcher
+└── desktop-app/               # Native Desktop Edition (Rust + Tauri v2 + Svelte 5)
+    ├── README.md              # Desktop setup & build guide
+    ├── Cargo.toml             # Rust workspace (core-engine + tauri-app)
     ├── crates/
-    │   ├── core-engine/    # Lock-free positional I/O, wreq TLS, SQLite WAL, autotune
-    │   └── tauri-app/      # Native Tauri v2 desktop shell & taskbar integration
-    ├── ui/                 # Svelte 5 + Vite frontend
-    ├── run.bat             # v2 1-click Windows build & launcher
-    └── run.sh              # v2 1-click Linux build & launcher
+    │   ├── core-engine/       # Lock-free positional I/O, wreq TLS, SQLite WAL
+    │   └── tauri-app/         # Native Tauri v2 desktop shell & taskbar progress
+    ├── ui/                    # Svelte 5 + Vite frontend
+    ├── run.bat                # 1-click Windows build & launcher
+    └── run.sh                 # 1-click Linux build & launcher
 ```
 
 ---

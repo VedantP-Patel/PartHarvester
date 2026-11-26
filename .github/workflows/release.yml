@@ -10,8 +10,11 @@ on:
 
 jobs:
   test-v1-python:
-    name: Test v1 (Web Edition)
+    name: Test Web Edition (Python)
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web-edition
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -22,7 +25,7 @@ jobs:
           PYTHONPATH=. pytest tests
 
   test-v2-rust:
-    name: Test v2 Core Engine & UI
+    name: Test Desktop App (Rust & UI)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -33,12 +36,12 @@ jobs:
       - run: |
           sudo apt-get update
           sudo apt-get install -y cmake clang nasm libsqlite3-dev
-          npm --prefix v2/ui ci
-          npm --prefix v2/ui run build
-          cargo test --manifest-path v2/Cargo.toml -p core-engine
+          npm --prefix desktop-app/ui ci
+          npm --prefix desktop-app/ui run build
+          cargo test --manifest-path desktop-app/Cargo.toml -p core-engine
 
   build-desktop:
-    name: Build v2 Desktop (${{ matrix.os }})
+    name: Build Desktop App (${{ matrix.os }})
     needs: [test-v1-python, test-v2-rust]
     strategy:
       fail-fast: false
@@ -65,14 +68,14 @@ jobs:
         run: choco install nasm -y
       - name: Build UI
         run: |
-          npm --prefix v2/ui ci
-          npm --prefix v2/ui run build
+          npm --prefix desktop-app/ui ci
+          npm --prefix desktop-app/ui run build
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          projectPath: v2/crates/tauri-app
+          projectPath: desktop-app/crates/tauri-app
           tagName: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
           releaseName: "PartHarvester ${{ github.ref_name }}"
           releaseBody: "Cross-platform native desktop builds (Windows & Linux)."
