@@ -497,13 +497,30 @@ class AsyncDownloader:
             del self.tasks[tid]
         return len(to_remove)
 
-    def clear_all(self) -> int:
+    def _delete_task_files(self, task: DownloadTask) -> None:
+        if not task.destination_dir or not task.filename:
+            return
+        for p in (
+            os.path.join(task.destination_dir, f"{task.filename}.part"),
+            os.path.join(task.destination_dir, task.filename),
+        ):
+            try:
+                if os.path.exists(p):
+                    os.remove(p)
+            except Exception:
+                pass
+
+    def clear_all(self, delete_files: bool = False) -> int:
+        snapshot = list(self.tasks.values()) if delete_files else []
         self.pause_all()
         count = len(self.tasks)
         for j in list(self._journals.values()):
             j.cleanup()
         self._journals.clear()
         self.tasks.clear()
+        if delete_files:
+            for t in snapshot:
+                self._delete_task_files(t)
         return count
 
     @staticmethod
@@ -595,7 +612,8 @@ class AsyncDownloader:
                 self._auto_retry_state.pop(task.id, None)
         self.trigger_queue_processing()
 
-    def remove_task(self, task_id: str) -> bool:
+    def remove_task(self, task_id: str, delete_file: bool = False) -> bool:
+        task_obj = self.tasks.get(task_id) if delete_file else None
         self.pause_task(task_id)
         self._pinned_handoff_ip.pop(task_id, None)
         self._task_assigned_ip.pop(task_id, None)
@@ -604,6 +622,8 @@ class AsyncDownloader:
             j.cleanup()
         if task_id in self.tasks:
             del self.tasks[task_id]
+            if delete_file and task_obj:
+                self._delete_task_files(task_obj)
             return True
         return False
 

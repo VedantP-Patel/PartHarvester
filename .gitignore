@@ -35,12 +35,22 @@ htmlcov/
 
 # Local session state & Downloads
 download_session.json
+download_session.json.bak
+*.db
+*.db-shm
+*.db-wal
 scratch/
 *.part
 *.bin
 *.rar
 *.7z
 *.zip
+
+# Rust / Tauri v2
+v2/target/
+v2/crates/tauri-app/gen/
+v2/ui/node_modules/
+v2/ui/dist/
 
 # Operating System
 .DS_Store

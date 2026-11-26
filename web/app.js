@@ -569,8 +569,11 @@ function renderTasks(tasks, adapters) {
             <button class="btn-row-action" title="Copy Download URL" data-url="${escapeHtml(t.original_url)}" onclick="copyLink(this.getAttribute('data-url'))">
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
             </button>
-            <button class="btn-row-action btn-danger" title="Remove Task" onclick="removeTask('${id}')">
+            <button class="btn-row-action btn-danger" title="Remove Task (keep file)" onclick="removeTask('${id}', false)">
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+            <button class="btn-row-action btn-danger" title="Delete Task &amp; File from Disk" onclick="removeTask('${id}', true)">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
             </button>
           </div>
         </td>`;
@@ -679,8 +682,9 @@ async function resumeTask(taskId) {
   fetchInitialStatus();
 }
 
-async function removeTask(taskId) {
-  await fetch(`/api/task/${taskId}`, { method: 'DELETE' });
+async function removeTask(taskId, deleteFile = false) {
+  if (deleteFile && !confirm('Delete this task AND its local file from disk?')) return;
+  await fetch(`/api/task/${taskId}?delete_file=${deleteFile ? 'true' : 'false'}`, { method: 'DELETE' });
   fetchInitialStatus();
 }
 

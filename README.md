@@ -51,23 +51,36 @@ PartHarvester is an asynchronous, zero-lag download manager built specifically t
 
 ## 🚀 Quick Start Guide
 
-### Prerequisites
-- **Python 3.12+ / 3.15** (64-bit)
-- **7-Zip** (64-bit) installed at `C:\Program Files\7-Zip\7z.exe` (for automated unpacking)
+PartHarvester is available in **two full-featured editions** (both share identical core features: PrivateBin decryption, multi-adapter Combinational Net, smart auto-tuning, resumable range streaming, `.sfv` verification, file deletion from disk, and 7-Zip auto-extraction):
 
-### 1-Click Launch (Windows)
-Simply double-click:
-```cmd
-run.bat
-```
-This starts the local FastAPI server and automatically opens your web browser to:
-**`http://localhost:5000`**
+| Edition | Best For | Platforms | Launch |
+| :--- | :--- | :--- | :--- |
+| **Native Desktop (`v2/`)** | Fastest lock-free Rust engine, SQLite WAL, native taskbar progress | Windows, Linux | Download from **Releases** or run `v2\run.bat` / `./v2/run.sh` |
+| **Web Edition (root)** | Zero-compile browser UI (`http://localhost:5000`), Python only | Windows, Linux, macOS | Run `run.bat` / `./run.sh` |
 
-### Manual Launch (Terminal)
-```powershell
-cd d:\Projects\multi-part-downloader
-py main.py
-```
+### 👤 For Normal Users (Zero Build Tools)
+1. **Native Desktop App**: Download the latest pre-built Windows `.exe` or Linux `.AppImage`/`.deb` from **GitHub Releases** and run it directly.
+2. **Web Edition (Lightweight)**:
+   - Install **Python 3.11+** (and **7-Zip** for auto-extraction).
+   - **Windows**: Double-click `run.bat`
+   - **Linux / macOS**: Run `./run.sh`
+   - Your browser opens automatically to `http://localhost:5000`.
+
+### 🛠️ For Developers (Building v2 from Source)
+- **Windows prerequisites**:
+  ```powershell
+  winget install OpenJS.NodeJS.LTS Rustlang.Rustup Kitware.CMake LLVM.LLVM NASM.NASM
+  ```
+  Then double-click `v2\run.bat` (auto-builds `ui` + `partharvester-tauri.exe`).
+- **Linux (Ubuntu/Debian) prerequisites**:
+  ```bash
+  sudo apt update && sudo apt install -y build-essential cmake clang nasm pkg-config \
+    libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf nodejs npm
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+  ```
+  Then run `./v2/run.sh`.
+
+See [v2/README.md](v2/README.md) for detailed v2 architecture and developer commands.
 
 ---
 
@@ -110,10 +123,14 @@ If you have a Real-Debrid account:
 
 ## 🧪 Running the Test Suite
 
+**v1 (Python Web Edition):**
 ```powershell
-cd d:\Projects\multi-part-downloader
-$env:PYTHONPATH = "."
-py -m pytest tests
+PYTHONPATH=. pytest tests
+```
+
+**v2 (Rust Core Engine):**
+```powershell
+cargo test --manifest-path v2/Cargo.toml -p core-engine
 ```
 
 ---
@@ -151,9 +168,19 @@ multi-part-downloader/
 │   ├── test_network.py     # Interface binding tests
 │   ├── test_privatebin.py  # Decryption verification tests
 │   └── test_unpacker.py    # Multi-part sequence tests
-├── main.py                 # Application entry point
-├── run.bat                 # 1-click Windows launcher
-└── requirements.txt        # Python dependencies
+├── main.py                 # v1 Web Edition entry point
+├── run.bat                 # v1 1-click Windows launcher
+├── run.sh                  # v1 1-click Linux/macOS launcher
+├── requirements.txt        # v1 Python dependencies
+└── v2/                     # v2 Native Desktop App (Rust + Tauri v2 + Svelte 5)
+    ├── README.md           # v2 setup, architecture & build guide
+    ├── Cargo.toml          # Rust workspace (core-engine + tauri-app)
+    ├── crates/
+    │   ├── core-engine/    # Lock-free positional I/O, wreq TLS, SQLite WAL, autotune
+    │   └── tauri-app/      # Native Tauri v2 desktop shell & taskbar integration
+    ├── ui/                 # Svelte 5 + Vite frontend
+    ├── run.bat             # v2 1-click Windows build & launcher
+    └── run.sh              # v2 1-click Linux build & launcher
 ```
 
 ---

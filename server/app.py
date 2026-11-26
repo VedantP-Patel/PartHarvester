@@ -300,8 +300,8 @@ async def retry_failed():
 
 
 @app.delete("/api/task/{task_id}")
-async def remove_task(task_id: str):
-    success = downloader.remove_task(task_id)
+async def remove_task(task_id: str, delete_file: bool = False):
+    success = downloader.remove_task(task_id, delete_file=delete_file)
     await asyncio.to_thread(session_mgr.save_session, settings, list(downloader.tasks.values()))
     return {"status": "ok" if success else "error"}
 
@@ -338,9 +338,9 @@ async def clear_completed_tasks():
 
 
 @app.post("/api/queue/clear-all")
-async def clear_all_tasks():
+async def clear_all_tasks(delete_files: bool = False):
     """Cancels and clears the entire queue."""
-    count = downloader.clear_all()
+    count = downloader.clear_all(delete_files=delete_files)
     await asyncio.to_thread(session_mgr.save_session, settings, list(downloader.tasks.values()))
     return {"status": "ok", "removed_count": count}
 
