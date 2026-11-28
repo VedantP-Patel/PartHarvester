@@ -45,7 +45,24 @@ class NetworkManager:
         "wireguard",
         "wintun",
         "tap-windows",
+        "warp",
+        "nordlynx",
+        "proton",
+        "mullvad",
+        "openvpn",
+        "radmin",
+        "hamachi",
+        "anyconnect",
+        "fortinet",
+        "pangps",
+        "checkpoint",
+        "virbr",
+        "veth",
     )
+
+    def should_bind_interface(self) -> bool:
+        """Only bind local sockets when 2+ enabled adapters exist so single-NIC/VPN setups use OS routing."""
+        return sum(1 for a in self.get_available_adapters() if a.is_enabled and a.is_up) > 1
 
     def __init__(self, ewma_alpha: float = 0.35, default_per_adapter_cap: int = 3):
         self._enabled_adapters: Dict[str, bool] = {}

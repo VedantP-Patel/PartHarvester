@@ -15,7 +15,21 @@ from engine.task import DownloadTask
 class SessionManager:
     """Manages persistent session state for PartHarvester."""
 
-    def __init__(self, filepath: str = "download_session.json"):
+    def __init__(self, filepath: str | None = None):
+        if filepath is None:
+            app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            candidate = os.path.join(app_dir, "download_session.json")
+            # Fall back to per-user writable data directory if app_dir is read-only
+            if not os.access(app_dir, os.W_OK):
+                base = (
+                    os.environ.get("APPDATA")
+                    or os.environ.get("XDG_DATA_HOME")
+                    or os.path.join(os.path.expanduser("~"), ".local", "share")
+                )
+                user_dir = os.path.join(base, "PartHarvester")
+                os.makedirs(user_dir, exist_ok=True)
+                candidate = os.path.join(user_dir, "download_session.json")
+            filepath = candidate
         self.filepath = filepath
         self.backup_filepath = f"{filepath}.bak"
         self._save_lock = threading.Lock()

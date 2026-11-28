@@ -51,20 +51,20 @@ PartHarvester is an asynchronous, zero-lag download manager built specifically t
 
 ## 🚀 Quick Start Guide
 
-PartHarvester is available in **two full-featured editions** (both share identical core features: PrivateBin decryption, multi-adapter Combinational Net, smart auto-tuning, resumable range streaming, `.sfv` verification, file deletion from disk, and 7-Zip auto-extraction):
+PartHarvester is available in **two full-featured editions** (both share identical core features: PrivateBin decryption, multi-adapter Combinational Net, smart auto-tuning, resumable range streaming, `.sfv` verification, file deletion from disk, and automated **7-Zip / WinRAR** extraction):
 
 | Edition | Best For | Platforms | Launch |
 | :--- | :--- | :--- | :--- |
-| **Native Desktop (`desktop-app/`)** | Fastest lock-free Rust engine, SQLite WAL, native taskbar progress | Windows, Linux | Download from **Releases** or run `desktop-app\run.bat` / `./desktop-app/run.sh` |
+| **Native Desktop (`desktop-app/`)** | Fastest lock-free Rust engine, SQLite WAL, native taskbar progress | Windows, Linux | Download from **[Releases](https://github.com/VedantP-Patel/PartHarvester/releases)** or run `desktop-app\run.bat` / `./desktop-app/run.sh` |
 | **Web Edition (`web-edition/`)** | Zero-compile browser UI (`http://localhost:5000`), Python only | Windows, Linux, macOS | Run `web-edition\run.bat` / `./web-edition/run.sh` |
 
 ### 👤 For Normal Users (Zero Build Tools)
-1. **Native Desktop App**: Download the latest pre-built Windows `.exe` or Linux `.AppImage`/`.deb` from **GitHub Releases** and run it directly.
+1. **Native Desktop App (Recommended)**: Download the latest pre-built Windows installer / portable `.exe` or Linux `.AppImage` / `.deb` from **[GitHub Releases](https://github.com/VedantP-Patel/PartHarvester/releases)** and run it directly — no Python, Rust, or C++ tools needed.
 2. **Web Edition (Lightweight)**:
-   - Install **Python 3.11+** (and **7-Zip** for auto-extraction).
-   - **Windows**: Double-click `web-edition\run.bat`
+   - Install **Python 3.10+** (and **7-Zip** or **WinRAR** for auto-extraction).
+   - **Windows**: Double-click `web-edition\run.bat` (auto-creates `.venv` and installs packages cleanly).
    - **Linux / macOS**: Run `./web-edition/run.sh`
-   - Your browser opens automatically to `http://localhost:5000`.
+   - Your browser opens automatically to `http://localhost:5000` (or the next free port if `5000` is in use).
 
 ### 🛠️ For Developers (Building Desktop App from Source)
 - **Windows prerequisites**:

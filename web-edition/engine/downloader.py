@@ -349,6 +349,11 @@ class AsyncDownloader:
         self.speed_limit_mbps = max(0.0, limit_mbps)
         self._token_limiter.set_rate(self.speed_limit_mbps)
 
+    def _effective_bind_ip(self, interface_ip: Optional[str]) -> Optional[str]:
+        if not interface_ip or not self.net_manager.should_bind_interface():
+            return None
+        return interface_ip
+
     async def _get_session(
         self, adapter_ip: Optional[str], force_http1: bool = True
     ) -> requests.AsyncSession:
@@ -708,7 +713,7 @@ class AsyncDownloader:
                     active_ads = [
                         a for a in self.net_manager.get_available_adapters() if a.is_enabled and a.is_up
                     ]
-                    if active_ads:
+                    if active_ads and self.net_manager.should_bind_interface():
                         # Distribute pre-resolution across all healthy interfaces in parallel
                         for idx, ad in enumerate(active_ads):
                             slice_urls = upcoming_urls[idx::len(active_ads)]
@@ -740,8 +745,6 @@ class AsyncDownloader:
                         else:
                             self._active_pinned_ips.pop(task.id, None)
                             chosen_adapter = self.net_manager.get_best_available_adapter(total_stream_budget)
-                        if not chosen_adapter:
-                            break
 
                         task.status = TaskStatus.RESOLVING
                         active_count += 1
@@ -800,7 +803,7 @@ class AsyncDownloader:
 
     async def _resolve_fresh_url(self, task: DownloadTask, interface_ip: Optional[str], use_cache: bool) -> None:
         direct_url, filename, expected_size = await self.link_manager.resolve_link(
-            task.original_url, interface=interface_ip, use_cache=use_cache
+            task.original_url, interface=self._effective_bind_ip(interface_ip), use_cache=use_cache
         )
         task.direct_url = direct_url
         if filename and (task.filename == "download.bin" or not task.filename):
@@ -809,11 +812,16 @@ class AsyncDownloader:
             task.file_size = expected_size
             task.supports_range = True
 
-    async def _execute_task_pipeline(self, task: DownloadTask, adapter: NetworkAdapter) -> None:
+    async def _execute_task_pipeline(self, task: DownloadTask, adapter: Optional[NetworkAdapter]) -> None:
         current_adapter: Optional[NetworkAdapter] = adapter
-        interface_ip = current_adapter.ip_address
-        task.assigned_adapter = f"{current_adapter.friendly_type} ({interface_ip})"
-        self._task_assigned_ip[task.id] = interface_ip
+        interface_ip: Optional[str] = current_adapter.ip_address if current_adapter else None
+        task.assigned_adapter = (
+            f"{current_adapter.friendly_type} ({interface_ip})" if current_adapter else "System Default"
+        )
+        if interface_ip:
+            self._task_assigned_ip[task.id] = interface_ip
+        else:
+            self._task_assigned_ip.pop(task.id, None)
         task.status = TaskStatus.RESOLVING
         max_resolve_retries = max(1, self.max_retries)
         resolve_success = False
@@ -925,6 +933,7 @@ class AsyncDownloader:
 
     async def _download_stream(self, task: DownloadTask, interface_ip: Optional[str]) -> None:
         os.makedirs(task.destination_dir, exist_ok=True)
+        bind_ip = self._effective_bind_ip(interface_ip)
 
         if task.file_size <= 0:
             headers = {
@@ -933,7 +942,7 @@ class AsyncDownloader:
                 "Range": "bytes=0-0",
             }
             try:
-                session = await self._get_session(interface_ip, force_http1=True)
+                session = await self._get_session(bind_ip, force_http1=True)
                 probe = await session.get(task.direct_url, headers=headers, stream=True, timeout=20)
                 try:
                     if probe.status_code == 206:

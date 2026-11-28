@@ -214,6 +214,14 @@ impl DownloadEngine {
         });
     }
 
+    fn effective_bind_ip<'a>(&self, ip: &'a str) -> Option<&'a str> {
+        if ip.is_empty() || !self.net_mgr.should_bind_interface() {
+            None
+        } else {
+            Some(ip)
+        }
+    }
+
     pub fn apply_auto_tune(&self) {
         let adapters = self.net_mgr.get_available_adapters();
         let rec = self.auto_tuner.evaluate(&adapters);
@@ -639,15 +647,23 @@ impl DownloadEngine {
                             ads.into_iter().next()
                         });
 
-                    let Some(ad) = adapter else { break };
-                    *local_pending.entry(ad.ip_address.clone()).or_insert(0) += 1;
+                    let (ad_label, ad_ip) = match adapter {
+                        Some(ad) => (
+                            format!("{} ({})", ad.friendly_type, ad.ip_address),
+                            ad.ip_address,
+                        ),
+                        None => ("System Default".to_string(), String::new()),
+                    };
+                    if !ad_ip.is_empty() {
+                        *local_pending.entry(ad_ip.clone()).or_insert(0) += 1;
+                    }
                     t.status = TaskStatus::Resolving;
-                    t.assigned_adapter = Some(format!("{} ({})", ad.friendly_type, ad.ip_address));
+                    t.assigned_adapter = Some(ad_label);
                     self.task_assigned_ip
                         .lock()
-                        .insert(t.id.clone(), ad.ip_address.clone());
+                        .insert(t.id.clone(), ad_ip.clone());
                     active_count += 1;
-                    to_spawn.push((t.id.clone(), ad.ip_address));
+                    to_spawn.push((t.id.clone(), ad_ip));
                 }
             }
 
@@ -678,24 +694,36 @@ impl DownloadEngine {
             return;
         };
 
-        // Try assigned adapter, and automatically failover to any other healthy adapter if it times out or fails
+        // Try assigned adapter, failover to other adapters, and finish with System Default (no local bind)
         let mut candidate_ips = vec![interface_ip.clone()];
         for ad in self.net_mgr.get_available_adapters() {
             if ad.is_enabled && ad.is_up && ad.ip_address != interface_ip {
                 candidate_ips.push(ad.ip_address);
             }
         }
+        if !interface_ip.is_empty() && !candidate_ips.iter().any(|c| c.is_empty()) {
+            candidate_ips.push(String::new());
+        }
 
         let mut resolved_opt = None;
         let mut last_err_msg = String::new();
         for cand_ip in candidate_ips {
-            self.net_mgr.increment_connections(&cand_ip);
+            let bind_opt = if cand_ip.is_empty() {
+                None
+            } else {
+                self.effective_bind_ip(&cand_ip)
+            };
+            if !cand_ip.is_empty() {
+                self.net_mgr.increment_connections(&cand_ip);
+            }
             let res = tokio::time::timeout(
                 Duration::from_secs(15),
-                self.link_mgr.resolve_link(&orig_url, Some(&cand_ip), true),
+                self.link_mgr.resolve_link(&orig_url, bind_opt, true),
             )
             .await;
-            self.net_mgr.decrement_connections(&cand_ip);
+            if !cand_ip.is_empty() {
+                self.net_mgr.decrement_connections(&cand_ip);
+            }
 
             match res {
                 Ok(Ok(r)) => {
@@ -704,7 +732,11 @@ impl DownloadEngine {
                         interface_ip = cand_ip.clone();
                         let mut tasks = self.tasks.lock();
                         if let Some(t) = tasks.iter_mut().find(|t| t.id == task_id) {
-                            t.assigned_adapter = Some(format!("Failover ({cand_ip})"));
+                            t.assigned_adapter = Some(if cand_ip.is_empty() {
+                                "System Default".to_string()
+                            } else {
+                                format!("Failover ({cand_ip})")
+                            });
                         }
                     }
                     resolved_opt = Some(r);
@@ -715,11 +747,18 @@ impl DownloadEngine {
                     if last_err_msg.contains("404") || last_err_msg.contains("Dead link") {
                         break;
                     }
-                    self.auto_tuner.register_cooldown(Some(&cand_ip), 45.0);
+                    if !cand_ip.is_empty() {
+                        self.auto_tuner.register_cooldown(Some(&cand_ip), 45.0);
+                    }
                 }
                 Err(_) => {
-                    last_err_msg = format!("Resolve timed out on {cand_ip}");
-                    self.auto_tuner.register_cooldown(Some(&cand_ip), 60.0);
+                    last_err_msg = format!(
+                        "Resolve timed out on {}",
+                        if cand_ip.is_empty() { "System Default" } else { &cand_ip }
+                    );
+                    if !cand_ip.is_empty() {
+                        self.auto_tuner.register_cooldown(Some(&cand_ip), 60.0);
+                    }
                 }
             }
         }
@@ -758,7 +797,7 @@ impl DownloadEngine {
         let client = match self
             .link_mgr
             .pool
-            .get_client(Some(&interface_ip), Profile::Chrome131, true)
+            .get_client(self.effective_bind_ip(&interface_ip), Profile::Chrome131, true)
         {
             Ok(c) => c,
             Err(e) => {
@@ -965,8 +1004,10 @@ impl DownloadEngine {
         let client = self
             .link_mgr
             .pool
-            .get_client(Some(&adapter_ip), Profile::Chrome131, true)?;
-        self.net_mgr.increment_connections(&adapter_ip);
+            .get_client(self.effective_bind_ip(&adapter_ip), Profile::Chrome131, true)?;
+        if !adapter_ip.is_empty() {
+            self.net_mgr.increment_connections(&adapter_ip);
+        }
         let _conn_guard = ConnGuard {
             net_mgr: &self.net_mgr,
             ip: adapter_ip.clone(),
@@ -1107,7 +1148,7 @@ impl DownloadEngine {
         let client = self
             .link_mgr
             .pool
-            .get_client(Some(adapter_ip), Profile::Chrome131, true)?;
+            .get_client(self.effective_bind_ip(adapter_ip), Profile::Chrome131, true)?;
         let mut req = client.get(url);
         if !referer.is_empty() {
             req = req.header("Referer", referer);

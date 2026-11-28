@@ -23,13 +23,16 @@ class ArchiveExtractor:
     ]
 
     def __init__(self, seven_zip_path: Optional[str] = None):
-        self.seven_zip_path = seven_zip_path or self._find_7zip()
+        self.seven_zip_path = seven_zip_path
         self.extraction_jobs: Dict[str, dict] = {}
 
     def _find_7zip(self) -> Optional[str]:
         standard_paths = [
             r"C:\Program Files\7-Zip\7z.exe",
             r"C:\Program Files (x86)\7-Zip\7z.exe",
+            os.path.expandvars(r"%LocalAppData%\Programs\7-Zip\7z.exe"),
+            os.path.expandvars(r"%USERPROFILE%\scoop\shims\7z.exe"),
+            shutil.which("7zz"),
             shutil.which("7z"),
             shutil.which("7za"),
         ]
@@ -37,6 +40,63 @@ class ArchiveExtractor:
             if path and os.path.exists(path):
                 return path
         return None
+
+    def _find_winrar_or_unrar(self) -> Optional[Tuple[str, str]]:
+        """Finds WinRAR/UnRAR binary and returns (kind, path) where kind is 'unrar' or 'winrar'."""
+        roots = [
+            r"C:\Program Files\WinRAR",
+            r"C:\Program Files (x86)\WinRAR",
+            os.path.expandvars(r"%LocalAppData%\Programs\WinRAR"),
+        ]
+        for root in roots:
+            for name, kind in (("UnRAR.exe", "unrar"), ("Rar.exe", "unrar"), ("WinRAR.exe", "winrar")):
+                p = os.path.join(root, name)
+                if os.path.exists(p):
+                    return kind, p
+        for exe, kind in (("unrar", "unrar"), ("rar", "unrar"), ("winrar", "winrar")):
+            found = shutil.which(exe)
+            if found:
+                return kind, found
+        return None
+
+    def _find_extractor(self, archive_path: str) -> Optional[Tuple[str, str]]:
+        """Selects the best installed extractor (7z, unrar, or winrar) for the archive."""
+        if self.seven_zip_path and os.path.exists(self.seven_zip_path):
+            return "7z", self.seven_zip_path
+
+        lower_name = os.path.basename(archive_path).lower()
+        is_rar = (
+            ".rar" in lower_name
+            or lower_name.endswith(".exe")
+            or bool(re.search(r"\.r\d{2}$", lower_name))
+        )
+
+        sz = self._find_7zip()
+        if sz:
+            return "7z", sz
+
+        wr = self._find_winrar_or_unrar()
+        if wr:
+            kind, path = wr
+            if is_rar or kind == "winrar":
+                return kind, path
+            for root in (r"C:\Program Files\WinRAR", r"C:\Program Files (x86)\WinRAR"):
+                gui = os.path.join(root, "WinRAR.exe")
+                if os.path.exists(gui):
+                    return "winrar", gui
+        return None
+
+    @staticmethod
+    def build_extract_command(
+        kind: str, binary_path: str, archive_path: str, output_dir: str
+    ) -> List[str]:
+        """Builds the CLI command for 7-Zip, UnRAR, or WinRAR."""
+        if kind == "7z":
+            return [binary_path, "x", "-y", "-p-", "-mmt=on", f"-o{output_dir}", archive_path]
+        out_trailing = output_dir if output_dir.endswith(("\\", "/")) else output_dir + os.sep
+        if kind == "winrar":
+            return [binary_path, "x", "-o+", "-y", "-p-", "-ibck", archive_path, out_trailing]
+        return [binary_path, "x", "-o+", "-y", "-p-", archive_path, out_trailing]
 
     @classmethod
     def match_part_sequence(cls, filename: str) -> Optional[Tuple[str, int, str]]:
@@ -96,9 +156,13 @@ class ArchiveExtractor:
         part_files: Optional[List[str]] = None,
         delete_after_extract: bool = False,
     ) -> bool:
-        """Executes multithreaded 7-Zip extraction in background and optionally cleans up parts."""
-        if not self.seven_zip_path:
-            raise FileNotFoundError("7-Zip (7z.exe) not found on system.")
+        """Executes multithreaded 7-Zip or WinRAR/UnRAR extraction in background."""
+        found = self._find_extractor(archive_path)
+        if not found:
+            raise FileNotFoundError(
+                "No archive extractor found. Install 7-Zip (7-zip.org) or WinRAR (win-rar.com)."
+            )
+        kind, binary_path = found
         if not os.path.exists(archive_path):
             raise FileNotFoundError(f"Archive first part does not exist: {archive_path}")
 
@@ -110,15 +174,7 @@ class ArchiveExtractor:
             "error": None,
         }
 
-        cmd = [
-            self.seven_zip_path,
-            "x",
-            "-y",
-            "-p-",
-            "-mmt=on",
-            f"-o{output_dir}",
-            archive_path,
-        ]
+        cmd = self.build_extract_command(kind, binary_path, archive_path, output_dir)
 
         try:
             proc = await asyncio.to_thread(

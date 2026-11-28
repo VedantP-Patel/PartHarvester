@@ -117,8 +117,11 @@ impl ArchiveExtractor {
     where
         F: FnMut(ExtractionJob) + Send,
     {
-        let seven_zip = platform::find_7zip()
-            .ok_or_else(|| anyhow!("7-Zip (7z/7zz) not found on system."))?;
+        let extractor = platform::find_archive_extractor(&archive_path).ok_or_else(|| {
+            anyhow!(
+                "No archive extractor found. Install 7-Zip (7-zip.org) or WinRAR (win-rar.com), or disable Auto-Extract."
+            )
+        })?;
         if !archive_path.exists() {
             return Err(anyhow!(
                 "Archive first part does not exist: {}",
@@ -138,14 +141,45 @@ impl ArchiveExtractor {
         };
         on_progress(job.clone());
 
-        let mut child = Command::new(&seven_zip)
-            .arg("x")
-            .arg("-y")
-            .arg("-p-")
-            .arg("-mmt=on")
-            .arg("-bsp1")
-            .arg(format!("-o{}", output_dir.display()))
-            .arg(&archive_path)
+        let mut cmd = Command::new(&extractor.path);
+        match extractor.kind {
+            platform::ArchiveExtractorKind::SevenZip => {
+                cmd.arg("x")
+                    .arg("-y")
+                    .arg("-p-")
+                    .arg("-mmt=on")
+                    .arg("-bsp1")
+                    .arg(format!("-o{}", output_dir.display()))
+                    .arg(&archive_path);
+            }
+            platform::ArchiveExtractorKind::Unrar => {
+                let mut out_arg = output_dir.to_string_lossy().to_string();
+                if !out_arg.ends_with(std::path::MAIN_SEPARATOR) && !out_arg.ends_with('/') {
+                    out_arg.push(std::path::MAIN_SEPARATOR);
+                }
+                cmd.arg("x")
+                    .arg("-o+")
+                    .arg("-y")
+                    .arg("-p-")
+                    .arg(&archive_path)
+                    .arg(out_arg);
+            }
+            platform::ArchiveExtractorKind::WinRar => {
+                let mut out_arg = output_dir.to_string_lossy().to_string();
+                if !out_arg.ends_with(std::path::MAIN_SEPARATOR) && !out_arg.ends_with('/') {
+                    out_arg.push(std::path::MAIN_SEPARATOR);
+                }
+                cmd.arg("x")
+                    .arg("-o+")
+                    .arg("-y")
+                    .arg("-p-")
+                    .arg("-ibck")
+                    .arg(&archive_path)
+                    .arg(out_arg);
+            }
+        }
+
+        let mut child = cmd
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -199,7 +233,7 @@ impl ArchiveExtractor {
             job.error = Some(stderr_text.chars().rev().take(500).collect::<String>().chars().rev().collect());
             on_progress(job.clone());
             Err(anyhow!(
-                "7-Zip extraction failed: {}",
+                "Archive extraction failed: {}",
                 job.error.as_deref().unwrap_or("Unknown error")
             ))
         }

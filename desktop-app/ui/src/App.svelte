@@ -536,7 +536,7 @@
         </div>
         <label class="inline-toggle">
           <input type="checkbox" checked={snap.settings.auto_extract} onchange={(e) => toggleAutoExtractInline((e.currentTarget as HTMLInputElement).checked)} />
-          <span>Auto-Extract (7z)</span>
+          <span>Auto-Extract (7-Zip / WinRAR)</span>
         </label>
       </div>
       <button class="btn btn-primary ingest-btn" onclick={handleIngest}>

@@ -166,8 +166,37 @@ async fn verify_sfv(sfv_path: String) -> Result<Vec<ChecksumResult>, String> {
         .map_err(|e| e.to_string())
 }
 
+fn resolve_data_dir() -> PathBuf {
+    // Preserve portable mode when an existing writable database lives next to the binary/cwd
+    if let Ok(cwd) = std::env::current_dir() {
+        let local_db = cwd.join("partharvester.db");
+        if local_db.exists() {
+            if std::fs::OpenOptions::new().write(true).append(true).open(&local_db).is_ok() {
+                return cwd;
+            }
+        }
+    }
+
+    // Standard per-user writable data directory (avoids Permission Denied under Program Files / /usr/bin)
+    #[cfg(windows)]
+    let base = std::env::var_os("APPDATA")
+        .or_else(|| std::env::var_os("LOCALAPPDATA"))
+        .map(PathBuf::from);
+    #[cfg(not(windows))]
+    let base = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")));
+
+    if let Some(dir) = base.map(|b| b.join("PartHarvester")) {
+        if std::fs::create_dir_all(&dir).is_ok() {
+            return dir;
+        }
+    }
+    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+}
+
 fn main() {
-    let data_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let data_dir = resolve_data_dir();
     let db_path = data_dir.join("partharvester.db");
     let legacy_json = data_dir.join("download_session.json");
 

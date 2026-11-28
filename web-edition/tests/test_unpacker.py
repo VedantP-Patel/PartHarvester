@@ -84,3 +84,18 @@ def test_group_tasks_zero_indexed_r00_sequence():
     assert groups[key]["total_parts"] == 3
     assert groups[key]["is_complete"] is True
     assert groups[key]["first_part"] == "archive.r00"
+
+
+def test_build_extract_command_7z_and_winrar():
+    out_dir = os.path.join("tmp", "extracted")
+    cmd_7z = ArchiveExtractor.build_extract_command("7z", "7z.exe", "game.part01.rar", out_dir)
+    assert cmd_7z[0] == "7z.exe"
+    assert f"-o{out_dir}" in cmd_7z
+
+    cmd_unrar = ArchiveExtractor.build_extract_command("unrar", "UnRAR.exe", "game.part01.rar", out_dir)
+    assert cmd_unrar[:5] == ["UnRAR.exe", "x", "-o+", "-y", "-p-"]
+    assert cmd_unrar[-1].endswith(os.sep)
+
+    cmd_winrar = ArchiveExtractor.build_extract_command("winrar", "WinRAR.exe", "game.7z.001", out_dir)
+    assert "-ibck" in cmd_winrar
+    assert cmd_winrar[-1].endswith(os.sep)

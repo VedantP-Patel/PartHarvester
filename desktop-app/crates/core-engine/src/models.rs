@@ -135,16 +135,15 @@ pub struct AppSettings {
 
 impl Default for AppSettings {
     fn default() -> Self {
-        let dl_dir = std::env::var("USERPROFILE")
-            .or_else(|_| std::env::var("HOME"))
-            .map(|h| {
-                std::path::PathBuf::from(h)
-                    .join("Downloads")
-                    .join("PartHarvester")
-                    .to_string_lossy()
-                    .to_string()
+        let dl_dir = dirs::download_dir()
+            .or_else(|| {
+                std::env::var("USERPROFILE")
+                    .or_else(|_| std::env::var("HOME"))
+                    .ok()
+                    .map(|h| std::path::PathBuf::from(h).join("Downloads"))
             })
-            .unwrap_or_else(|_| "Downloads/PartHarvester".to_string());
+            .map(|d| d.join("PartHarvester").to_string_lossy().to_string())
+            .unwrap_or_else(|| "Downloads/PartHarvester".to_string());
         Self {
             download_dir: dl_dir,
             auto_tune: true,

@@ -133,7 +133,7 @@
           </div>
           <label class="toggle-row">
             <input type="checkbox" bind:checked={draft.auto_extract} />
-            <span>Auto-Extract Multi-Part Archives (7-Zip)</span>
+            <span>Auto-Extract Multi-Part Archives (7-Zip / WinRAR)</span>
           </label>
           <label class="toggle-row">
             <input type="checkbox" bind:checked={draft.delete_archive_after_extract} />

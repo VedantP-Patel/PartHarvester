@@ -27,6 +27,17 @@ const VIRTUAL_KEYWORDS: &[&str] = &[
     "tun",
     "tap",
     "wg",
+    "warp",
+    "nordlynx",
+    "proton",
+    "mullvad",
+    "openvpn",
+    "radmin",
+    "hamachi",
+    "anyconnect",
+    "fortinet",
+    "pangps",
+    "checkpoint",
 ];
 
 struct NetState {
@@ -66,6 +77,14 @@ impl NetworkManager {
         }
     }
 
+    pub fn should_bind_interface(&self) -> bool {
+        self.get_available_adapters()
+            .into_iter()
+            .filter(|a| a.is_enabled && a.is_up)
+            .count()
+            > 1
+    }
+
     pub fn set_adapter_cap(&self, ip: &str, cap: u32) {
         if !ip.is_empty() {
             self.state
@@ -83,11 +102,17 @@ impl NetworkManager {
     }
 
     pub fn increment_connections(&self, ip: &str) {
+        if ip.is_empty() {
+            return;
+        }
         let mut st = self.state.lock();
         *st.active_connections.entry(ip.to_string()).or_insert(0) += 1;
     }
 
     pub fn decrement_connections(&self, ip: &str) {
+        if ip.is_empty() {
+            return;
+        }
         let mut st = self.state.lock();
         if let Some(c) = st.active_connections.get_mut(ip) {
             *c = c.saturating_sub(1);
@@ -95,6 +120,9 @@ impl NetworkManager {
     }
 
     pub fn record_chunk_transfer(&self, ip: &str, bytes_count: u64) {
+        if ip.is_empty() {
+            return;
+        }
         let now = Instant::now();
         let mut st = self.state.lock();
         let hist = st.bytes_history.entry(ip.to_string()).or_default();
@@ -305,6 +333,11 @@ impl NetworkManager {
                         } else {
                             String::new()
                         };
+                        // Skip software loopback (24) and virtual tunnel/VPN adapters (131)
+                        if ad.IfType == 24 || ad.IfType == 131 {
+                            ptr = ad.Next;
+                            continue;
+                        }
                         let is_up = ad.OperStatus.0 == 1; // IfOperStatusUp
                         let idx_str = ad.Anonymous1.Anonymous.IfIndex.to_string();
                         let has_gw = !ad.FirstGatewayAddress.is_null()

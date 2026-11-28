@@ -97,7 +97,15 @@ pub fn preallocate_sparse_file(path: &Path, size: u64) -> io::Result<()> {
             }
         }
 
-        file.set_len(size)?;
+        if let Err(e) = file.set_len(size) {
+            if size > 4_294_967_295 {
+                return Err(io::Error::new(
+                    e.kind(),
+                    format!("{e} (hint: if saving to a FAT32 drive, files >4 GB are unsupported; use NTFS/exFAT/ext4)"),
+                ));
+            }
+            return Err(e);
+        }
     }
     Ok(())
 }
@@ -278,17 +286,35 @@ pub fn get_default_route_interfaces() -> HashSet<String> {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArchiveExtractorKind {
+    SevenZip,
+    Unrar,
+    WinRar,
+}
+
+#[derive(Debug, Clone)]
+pub struct ArchiveExtractorBin {
+    pub kind: ArchiveExtractorKind,
+    pub path: PathBuf,
+}
+
 /// Locates 7-Zip binary cross-platform (`7z.exe` on Windows, `7zz`/`7z`/`7za` on Linux/macOS).
 pub fn find_7zip() -> Option<PathBuf> {
     #[cfg(windows)]
     {
-        let candidates = [
-            r"C:\Program Files\7-Zip\7z.exe",
-            r"C:\Program Files (x86)\7-Zip\7z.exe",
+        let mut candidates = vec![
+            PathBuf::from(r"C:\Program Files\7-Zip\7z.exe"),
+            PathBuf::from(r"C:\Program Files (x86)\7-Zip\7z.exe"),
         ];
-        for c in candidates {
-            let p = PathBuf::from(c);
-            if p.exists() {
+        if let Ok(local) = std::env::var("LocalAppData") {
+            candidates.push(PathBuf::from(&local).join(r"Programs\7-Zip\7z.exe"));
+        }
+        if let Ok(profile) = std::env::var("USERPROFILE") {
+            candidates.push(PathBuf::from(&profile).join(r"scoop\shims\7z.exe"));
+        }
+        for p in candidates {
+            if p.is_file() {
                 return Some(p);
             }
         }
@@ -300,6 +326,101 @@ pub fn find_7zip() -> Option<PathBuf> {
         }
     }
     None
+}
+
+/// Locates WinRAR / UnRAR binary (`UnRAR.exe`, `WinRAR.exe`, `unrar`, `rar`).
+pub fn find_winrar_or_unrar() -> Option<ArchiveExtractorBin> {
+    #[cfg(windows)]
+    {
+        let mut roots = vec![
+            PathBuf::from(r"C:\Program Files\WinRAR"),
+            PathBuf::from(r"C:\Program Files (x86)\WinRAR"),
+        ];
+        if let Ok(local) = std::env::var("LocalAppData") {
+            roots.push(PathBuf::from(local).join(r"Programs\WinRAR"));
+        }
+        for root in &roots {
+            let unrar = root.join("UnRAR.exe");
+            if unrar.is_file() {
+                return Some(ArchiveExtractorBin {
+                    kind: ArchiveExtractorKind::Unrar,
+                    path: unrar,
+                });
+            }
+            let rar = root.join("Rar.exe");
+            if rar.is_file() {
+                return Some(ArchiveExtractorBin {
+                    kind: ArchiveExtractorKind::Unrar,
+                    path: rar,
+                });
+            }
+            let winrar = root.join("WinRAR.exe");
+            if winrar.is_file() {
+                return Some(ArchiveExtractorBin {
+                    kind: ArchiveExtractorKind::WinRar,
+                    path: winrar,
+                });
+            }
+        }
+    }
+
+    for (bin, kind) in [
+        ("unrar", ArchiveExtractorKind::Unrar),
+        ("rar", ArchiveExtractorKind::Unrar),
+        ("winrar", ArchiveExtractorKind::WinRar),
+    ] {
+        if let Some(found) = which_in_path(bin) {
+            return Some(ArchiveExtractorBin { kind, path: found });
+        }
+    }
+    None
+}
+
+/// Picks the best available extractor (7-Zip, UnRAR, or WinRAR) for the given archive file.
+pub fn find_archive_extractor(archive_path: &Path) -> Option<ArchiveExtractorBin> {
+    let name_lower = archive_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let is_rar = name_lower.contains(".rar")
+        || name_lower.ends_with(".exe")
+        || regex_is_r00(&name_lower);
+
+    if let Some(sz) = find_7zip() {
+        return Some(ArchiveExtractorBin {
+            kind: ArchiveExtractorKind::SevenZip,
+            path: sz,
+        });
+    }
+
+    if let Some(wr) = find_winrar_or_unrar() {
+        // UnRAR/Rar CLI only handles RAR archives; WinRAR.exe handles .rar/.7z/.zip
+        if is_rar || wr.kind == ArchiveExtractorKind::WinRar {
+            return Some(wr);
+        }
+        #[cfg(windows)]
+        {
+            for root in [r"C:\Program Files\WinRAR", r"C:\Program Files (x86)\WinRAR"] {
+                let winrar = PathBuf::from(root).join("WinRAR.exe");
+                if winrar.is_file() {
+                    return Some(ArchiveExtractorBin {
+                        kind: ArchiveExtractorKind::WinRar,
+                        path: winrar,
+                    });
+                }
+            }
+        }
+    }
+    None
+}
+
+fn regex_is_r00(lower_name: &str) -> bool {
+    if let Some(dot) = lower_name.rfind('.') {
+        let ext = &lower_name[dot + 1..];
+        return ext.len() == 3 && ext.starts_with('r') && ext[1..].chars().all(|c| c.is_ascii_digit());
+    }
+    false
 }
 
 fn which_in_path(bin: &str) -> Option<PathBuf> {

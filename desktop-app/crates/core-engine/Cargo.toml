@@ -30,6 +30,7 @@ uuid = { version = "1", features = ["v4"] }
 anyhow = "1"
 parking_lot = "0.12"
 tokio-util = "0.7"
+dirs = "7"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [

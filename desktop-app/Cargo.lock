@@ -750,6 +750,7 @@ dependencies = [
  "bs58",
  "bytes",
  "crc32fast",
+ "dirs",
  "flate2",
  "futures-util",
  "hex",
