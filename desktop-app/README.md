@@ -7,8 +7,10 @@ Native cross-platform (**Windows + Linux**) desktop application powered by **Rus
 ## 👤 For Normal Users
 
 If you don't want to install Rust, Node.js, or C++ build tools:
-- Download the pre-built **Windows `.exe`** or **Linux `.AppImage` / `.deb`** from **GitHub Releases**, OR
-- Use the **Python Web Edition** from the repository root (`../run.bat` on Windows, `../run.sh` on Linux/macOS).
+- Download the pre-built **Windows installer / portable `.exe`** or **Linux `.AppImage` / `.deb`** from **[GitHub Releases](https://github.com/VedantP-Patel/PartHarvester/releases)**, OR
+- Use the **Python Web Edition** (`../web-edition/run.bat` on Windows, `../web-edition/run.sh` on Linux/macOS).
+
+Settings and queue state are automatically stored in your OS AppData directory (`%APPDATA%\PartHarvester` on Windows, `~/.local/share/PartHarvester` on Linux), and archives unpack automatically via **7-Zip** or **WinRAR / UnRAR**.
 
 ---
 
@@ -20,7 +22,8 @@ If you don't want to install Rust, Node.js, or C++ build tools:
 - [Node.js LTS](https://nodejs.org/) (`node` + `npm`)
 - [Rust](https://rustup.rs/) (`cargo`)
 - [CMake](https://cmake.org/), [LLVM/Clang](https://releases.llvm.org/), and [NASM](https://www.nasm.us/) (required by BoringSSL/`btls-sys` for TLS fingerprint emulation)
-- One-liner with `winget`:
+- Visual Studio C++ Build Tools (MSVC) or MSYS2 UCRT64 (`gcc`/`g++`)
+- Winget helper:
   ```powershell
   winget install OpenJS.NodeJS.LTS Rustlang.Rustup Kitware.CMake LLVM.LLVM NASM.NASM
   ```

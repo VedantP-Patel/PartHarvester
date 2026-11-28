@@ -4,7 +4,7 @@
 
 ## Platform
 
-web
+desktop (Windows + Linux) & web (Windows + Linux + macOS)
 
 ## Users
 
@@ -24,9 +24,9 @@ Unlike conventional browser download managers or generic torrent clients:
 
 ## Operating Context
 
-- **Environment:** Windows 10/11 desktop/laptop, standard 1080p (1920x1080) to 1440p displays, running locally at `http://127.0.0.1:5000`.
+- **Environment:** Windows 10/11 and Linux (1080p to 1440p displays); Native Desktop App (`desktop-app/`) or local Web Edition (`web-edition/`, `http://127.0.0.1:5000+`).
 - **Operating Scene:** Active while gaming or downloading in the background. The user wants a mission-control, high-density HUD visible at a glance without having to scroll down to check active part status, throughput, or remaining time.
-- **Tools Involved:** Web browser (Chrome, Edge, Firefox), local Python 3.15 runtime, 7-Zip 64-bit CLI (`7z.exe`), and connected physical network adapters (Ethernet, Wi-Fi, USB 5G Tethering).
+- **Tools Involved:** Tauri v2 + Svelte 5 desktop runtime (or browser + Python 3.10+ `.venv` for Web Edition), **7-Zip** or **WinRAR / UnRAR**, and connected physical network adapters (Ethernet, Wi-Fi, USB 5G Tethering) or System Default/VPN routing.
 
 ## Capabilities and Constraints
 
@@ -55,7 +55,7 @@ Unlike conventional browser download managers or generic torrent clients:
 - Verified live FuckingFast HTMX resolver extracting 1.95 GB / 2.00 GB streams with Range 206 (`resolvers/fuckingfast.py`).
 - Verified multi-adapter bonding engine and EWMA bandwidth tracker (`engine/network.py`).
 - Verified autonomous work-stealing downloader (`engine/downloader.py`).
-- Complete 14/14 automated pytest test suite (`tests/`).
+- Complete 44/44 `web-edition` pytest suite (`web-edition/tests/`) and 9/9 `desktop-app` Rust core-engine tests (`desktop-app/crates/core-engine/`).
 
 ## Product Principles
 

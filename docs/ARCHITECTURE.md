@@ -1,12 +1,12 @@
 # 📐 PartHarvester Technical Architecture Specification
 
 ## 1. Overview
-PartHarvester is architected as an asynchronous, non-blocking pipeline combining:
+PartHarvester ships in two editions sharing a unified core architecture (`web-edition/` in Python/FastAPI and `desktop-app/` in Rust/Tauri v2/Svelte 5):
 1. Client-side cryptographic decryption for zero-knowledge encrypted pastebins.
-2. Low-level socket interface binding (`CURLOPT_INTERFACE`) for multi-WAN channel bonding.
-3. TLS JA3/JA4 fingerprint impersonation via `curl_cffi` to pass Cloudflare checks.
-4. Resumable HTTP Range chunking with state persistence.
-5. Automated sequence validation and multithreaded extraction via 7-Zip.
+2. Low-level socket interface binding (`CURLOPT_INTERFACE` / `wreq::ClientBuilder::local_address`) when `2+` enabled physical adapters are bonded, with automatic **System Default** routing for single-NIC, VPN, proxy, and IPv6 environments.
+3. TLS JA3/JA4 fingerprint impersonation (`curl_cffi` in Web Edition; `wreq` BoringSSL profiles `Safari17_0`/`Chrome131`/`Chrome124` in Desktop App).
+4. Crash-safe resumable HTTP Range chunking (`.part.meta` journals in Web Edition; SQLite WAL + OS sparse range recovery `FSCTL_QUERY_ALLOCATED_RANGES` / `lseek(SEEK_DATA)` in Desktop App) with per-user AppData persistence (`%APPDATA%\PartHarvester` / `~/.local/share/PartHarvester`).
+5. Automated sequence validation and background unpacking via **7-Zip** or **WinRAR / UnRAR**.
 
 ```mermaid
 flowchart TD
@@ -160,8 +160,11 @@ For a detected prefix (e.g. `Phantom_Blade_Zero_-_fitgirl-repacks.site_-_part`):
 2. Completeness condition:
    $$\text{len}(\text{indices}) == N \quad \land \quad \min(\text{indices}) \in \{0, 1\} \quad \land \quad \forall i \in \text{indices}: \text{task}[i].\text{status} == \text{COMPLETED}$$
 3. When condition is met and `auto_extract` is enabled:
-   Executes background subprocess:
+   Selects **7-Zip** (`7z`/`7zz`/`7za`) or falls back automatically to **UnRAR / WinRAR** (`UnRAR.exe` / `WinRAR.exe -ibck` / `unrar`):
    ```cmd
-   7z.exe x -y -mmt=on -o"<destination_dir>\<prefix>" "<destination_dir>\<first_part.rar>"
+   # 7-Zip
+   7z.exe x -y -p- -mmt=on -bsp1 -o"<destination_dir>\<prefix>" "<destination_dir>\<first_part.rar>"
+   # UnRAR / WinRAR fallback
+   UnRAR.exe x -o+ -y -p- "<destination_dir>\<first_part.rar>" "<destination_dir>\<prefix>\"
    ```
 

@@ -4,15 +4,14 @@ __pycache__/
 *$py.class
 *.so
 .Python
-build/
-develop-eggs/
-dist/
+/build/
+/dist/
 downloads/
 eggs/
 .eggs/
 /lib/
 /lib64/
-parts/
+/parts/
 sdist/
 var/
 wheels/
@@ -33,18 +32,22 @@ env/
 .coverage
 htmlcov/
 
-# Local session state & Downloads
+# Local session state, journals & Downloads
 download_session.json
 download_session.json.bak
+download_session.json.tmp
 *.db
 *.db-shm
 *.db-wal
-scratch/
 *.part
+*.part.meta
+*.tmp
+scratch/
 *.bin
 *.rar
 *.7z
 *.zip
+*.sfv
 
 # Rust / Tauri Desktop App
 desktop-app/target/

@@ -2,7 +2,7 @@
 
 PartHarvester exposes a RESTful API and a real-time WebSocket telemetry stream for local web clients and automation scripts.
 
-Base URL: `http://localhost:5000`
+Base URL (Web Edition): `http://localhost:5000` *(automatically probes ports `5000..5025` if `5000` is occupied or reserved by Windows Hyper-V/WSL2)*
 
 ---
 
@@ -82,7 +82,8 @@ Returns overall metrics, task queue, active adapters, and extraction jobs.
 - **`POST /api/pause-all`**: Pauses all active downloads.
 - **`POST /api/resume-all`**: Resumes all paused downloads.
 - **`POST /api/retry-failed`**: Re-queues all failed downloads.
-- **`DELETE /api/task/{task_id}`**: Cancels and deletes a download item.
+- **`DELETE /api/task/{task_id}?delete_file=false`**: Cancels and removes a download item (set `delete_file=true` to also delete its `.part` / downloaded file from disk).
+- **`POST /api/queue/clear-all?delete_files=false`**: Clears the queue (set `delete_files=true` to also delete local files on disk).
 
 ---
 
@@ -136,7 +137,7 @@ Manually switches an active download to a specific network adapter with seamless
 ### 1.6 Manual Extraction Trigger
 **`POST /api/extract/{group_prefix}`**
 
-Triggers 7-Zip unpacking for a completed multi-part archive group.
+Triggers **7-Zip** or **WinRAR / UnRAR** unpacking for a completed multi-part archive group.
 
 ---
 
